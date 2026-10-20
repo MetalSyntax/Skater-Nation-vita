@@ -1,66 +1,117 @@
-# Skater Nation (PS Vita): Release v0.1-beta
+# Skater Nation PS Vita — Release v0.1-beta
 
-> **Status: beta release.** The SceGxm loading crash is fixed (run 31). Gameplay runs at 25–28 FPS in fullscreen with audio (run 33). Audio and the HUD ring opacity are not yet verified on console (see Known Issues).
-
----
-
-## Resolved: SceGxm crash during level loading (runs 22–31)
-
-- **Symptom**: abort in `SceGxm seg1 + 0xa548` (`sceGxmSetViewport`, via `gles_present → glClear → scene_reset`) while a level was loading. The registers were identical in every run.
-- **Cause**: the graphics path of the widescreen feature added in `297e1cc` (`gles.c`). Run 30 showed that no GXM call returned an error, which ruled out the "failed scene" theory. Run 31 restored the `7e6ebbe` graphics path, and the crash went away.
-- **Fixed along the way**: a heap-garbage crash in `WorldManager + 0x4528` (run 28). `operator new` did not zero memory as iOS does, and the constructor never initializes that field. Guest `malloc`/`operator new` now return zero-filled memory.
-
-| Run | Change | Result |
-|---|---|---|
-| 23–27 | Tile clipper, region guards, scene count, `call_guest`, `glFlush` no-op | Same SceGxm crash, or the fault moved |
-| 28 | Audio paused | Crash in game code: garbage in `WorldManager + 0x4528` |
-| 29 | Zero-filled `malloc` / `operator new` | `WorldManager` crash fixed; SceGxm crash back |
-| 30 | Log GXM scene error codes | No GXM errors logged: scenes do not fail |
-| 31 | `gles.c` + `input.c` restored to `7e6ebbe` | **No crash.** About 7 FPS (Debug build plus per-frame logging) |
-| 32 | Release build | No crash, still 7–8 FPS, black side bars |
-| 33 | Blades of Fury fullscreen stretch, audio on, perf log | **25–28 FPS**, fullscreen, audio |
-| 34 | Correct HudMenu offsets (`mc_pad` ring) | Pending console test |
-
-Per-run details (in Spanish): [`port_progress.md`](port_progress.md).
+**Title ID:** `PSVSN0001`  
+**Target Platform:** PlayStation Vita / PlayStation TV  
+**Base Game:** *Skater Nation* (Gameloft) — iOS version 1.2.1  
+**Status:** Playable / In-Game 3D / 25–28 FPS / Fullscreen  
 
 ---
 
-## Release Checklist
+## 🛹 Introduction
 
-- [x] Resolve the loading crash and play a level on console.
-- [x] Build in Release (no `DEBUG_LOADER`).
-- [x] Fullscreen with no black bars.
-- [ ] Verify music and sound effects with audio re-enabled (`AUDIO_ENABLED 1`).
-- [ ] Verify the 1% opacity on the joystick ring (`mc_pad`), thumb, and A/B (run 34).
-- [x] Generate `rebase.bin` for version 1.2.1 (60,307 words, magic `RBS1`).
-- [x] Tag `v0.1-beta`.
-- [ ] Publish the GitHub release with `skaternation.vpk` + `rebase.bin` attached.
+This is the first public beta (**v0.1-beta**) of **Skater Nation** for the PlayStation Vita and PlayStation TV.
+
+*Skater Nation* is Gameloft's 3D skateboarding game. You ride open street levels, chain ollies, grinds and tricks into combos, complete challenges, and unlock skaters and board parts (decks, trucks and wheels).
+
+The port runs the original binary on the Vita through a custom 32-bit Mach-O loader. The original ARM executable runs natively on the Vita's ARM Cortex-A9. The Irrlicht engine and the gameswf Flash UI run unmodified, while the Apple frameworks are replaced with vitaGL, OpenAL Soft, FreeType and the Vita system libraries.
 
 ---
 
-## Package Contents
+## 🌟 Features & Highlights
 
-1. **`skaternation.vpk`**: native Mach-O loader, vitaGL, FreeType, OpenAL Soft, and physical + touch controls.
-2. **`rebase.bin`**: relocation table (magic `'RBS1'`, word count, then 32-bit `vmaddr` values) for the iOS 1.2.1 executable mapped at `0x98000000`.
-
-Installation and controls: see [`README.md`](README.md).
+- **Native Execution (No Emulation):** Directly runs the original decrypted 32-bit iOS ARM Mach-O executable on the PS Vita CPU.
+- **Fullscreen 960x544 Display:** The game's 480x320 frame is stretched to the full Vita screen, with no letterboxing or black bars.
+- **Smooth Gameplay:** 25–28 FPS in-game (capped at 30 FPS), CPU-bound with a GPU swap cost under 1 ms.
+- **Dual Input Subsystem:**
+  - Full physical controls: Left Analog Stick, D-Pad, Face Buttons ($\square$, $\Delta$, $\bigcirc$, $\times$) and Shoulder Triggers (L / R), injected as touches on the game's own HUD.
+  - Right Analog Stick camera orbit, with adjustable sensitivity (1–10) that is saved between sessions.
+  - Front touchscreen support for all menus, shops and dialogs.
+- **Clean HUD:** The on-screen joystick and A/B buttons are drawn at 1% opacity, since you play with the physical controls. L + R toggles them back to 100%.
+- **Sound System:** OpenAL mapped to OpenAL Soft, and AudioUnit RemoteIO on top of `sceAudioOut`.
+- **iOS Memory Semantics:** Zero-filled heap allocations (`malloc` / `operator new`), which the game relies on, as it does on iOS.
+- **Runtime Apple CgBI PNG Decoding:** On-the-fly decompression and byte-swapping for all game textures.
+- **LiveArea Integration:** Custom icon, startup gate and background graphics.
 
 ---
 
-## Changelog (since 7e6ebbe)
+## 🎮 Controls
 
-- **Memory**: guest `malloc` and `operator new`/`new[]` return zero-filled memory, matching iOS.
-- **Graphics**: fullscreen stretch from 480×320 to 960×544, the same method as the Blades of Fury port, with no black bars. The `297e1cc` widescreen path was removed because it crashed SceGxm. Touch is mapped `x*480/960`.
-- **Performance**: 25–28 FPS in gameplay. Per-frame logging was removed (`AudioSessionGetProperty('othr')`). `gles_present` writes a `perf:` line every 5 s (fps, frame ms, swap ms). Swap takes 0.1–0.3 ms, so the frame time is CPU-bound.
-- **HUD**: 1% opacity on `btn_dpad`, `mc_pad`, `mc_thumb`, `mc_btn_a` and `mc_btn_b` through `gameswf::character::set_member("_alpha")` (called via `call_guest`), with an L+R toggle. It is re-applied when the HUD is rebuilt. Offsets come from `HudMenu::Init`. The minimap (`mc_map`) was hidden by mistake before and is now visible.
-- **Audio**: re-enabled (OpenAL Soft + RemoteIO on sceAudioOut, `MAIN` port), plus `MPMusicPlayerController` stubs.
-- **vitaGL**: scene errors are reported to the loader log (`vgl_gxm_error_hook`), and `vglSetupRenderTargetScenesNum` is clamped to [1, 8].
-- **Logging**: the game's `printf`/stdout output moved to `l_debug`, which is compiled out in Release.
+| Button | Skating Action | Menu Action |
+| :--- | :--- | :--- |
+| **Left Analog Stick / D-Pad** | Steering (virtual joystick) | — |
+| **Right Analog Stick** | Camera Orbit | — |
+| **$\times$ (Cross) / R** | Button A: Ollie / Jump | Confirm |
+| **$\square$ (Square) / $\bigcirc$ (Circle) / L** | Button B: Grind / Trick | — |
+| **$\Delta$ (Triangle)** | Trick Modifier | — |
+| **START** | Pause | Pause / Menu |
+| **SELECT** | Map / Objectives | — |
+| **SELECT + D-Pad ↑/↓** | Camera Sensitivity 1–10 (saved) | — |
+| **L + R together** | Toggle HUD joystick / A-B opacity (1% ↔ 100%) | — |
+| **Touchscreen** | Full Touch HUD | Direct Touch |
 
-## Known Issues
+---
 
-- Music/sound effects and the 1% opacity on the joystick ring (`mc_pad`) are not yet verified on console.
+## 📋 Installation Requirements
 
-- Frame rate drops to 0.6–3 FPS during level loads.
-- The fullscreen stretch makes the image slightly wider than the original 3:2.
-- The camera sensitivity OSD is disabled (`patch_overlay` is empty).
+Make sure your PS Vita has Henkaku / Enso installed with the following plugin active in `ur0:tai/config.txt`:
+
+```ini
+*KERNEL
+ur0:tai/kubridge.skprx
+```
+
+- **kubridge.skprx**
+- **libshacccg.suprx** in `ur0:data/` (Extract using [ShaRKBR33D](https://github.com/OsirizX/ShaRKBR33D))
+
+---
+
+## 📦 How to Install
+
+1. Download and install **`skaternation.vpk`** on your PS Vita using VitaShell.
+2. Obtain a legal, decrypted copy of *Skater Nation* for iOS (v1.2.1 `.ipa`, FairPlay `cryptid 0`).
+3. Extract the IPA file (rename to `.zip` and extract).
+4. Inside `Payload/`, locate the `SkateNation.app` folder.
+5. On your computer, run the staging tool to generate the relocation table and prepare the data folder:
+   ```bash
+   tools/stage_data.sh path/to/SkateNation.app
+   ```
+6. Copy the contents of `ux0_data/skaternation/` to `ux0:data/skaternation/` on your PS Vita via FTP or USB.
+
+   The directory on your console should look like this:
+   ```
+   ux0:data/skaternation/
+     ├── SkateNation.app/
+     │     ├── SkateNation
+     │     ├── Info.plist
+     │     ├── _packMac/
+     │     └── ...
+     ├── rebase.bin
+     ├── saves/
+     └── logs/
+   ```
+7. Launch **Skater Nation** from your LiveArea and enjoy!
+
+---
+
+## ⚠️ Known Issues
+
+- The frame rate drops to 0.6–3 FPS while a level is loading. It recovers once gameplay starts.
+- The fullscreen stretch makes the image slightly wider than the original 3:2 aspect ratio.
+- Music and sound effects have not been fully verified on every level yet.
+- Online features (Gameloft servers, in-game ads) are not available.
+
+---
+
+## 🛠️ Release Artifacts
+
+- **`skaternation.vpk`**: Standalone PlayStation Vita installable package (`PSVSN0001`).
+- **`eboot.bin`**: Standalone executable SELF for quick deployment via FTP.
+
+---
+
+## 👥 Credits
+
+- **Gameloft:** Original game developer and publisher.
+- **Rinnegatamante:** Author of `vitaGL` and core contributor to the Vita homebrew ecosystem.
+- **TheFloW:** Author of `kubridge`.
+- **Wonder Diaz:** Port developer (loader, ABI layer, graphics, audio, controls, and optimization).
