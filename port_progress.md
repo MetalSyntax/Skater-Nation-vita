@@ -220,6 +220,42 @@ desplegar y probar en la consola física.
     5. `source/patch.c`: Implementado empaquetado de `double` a `(uint32_t val_lo, uint32_t val_hi)` para `as_ctor` en `set_character_alpha`.
   - Compilación Release completada: `build/eboot.bin` (1.8 MB) y `build/skaternation.vpk` (2.2 MB).
 
+- [x] Corrida 25 (`logs/log_025.log` + Core Dump `skaternation-psp2core-1792471263-0x001fe52db1-eboot.bin.psp2dmp`): Data Abort en `SceGxm seg1 + 0x1e638` en el primer `glClear` (vía `update_scissor_test`), antes de la pantalla de carga.
+  - Causa raíz: `vglSetupRenderTargetScenesNum(4, 16)` de la corrida 24. sceGxm admite máximo 8 escenas por render target (`MAX_SCENES_PER_FRAME`); vitaGL marcaba el error pero asignaba 16 igual, `sceGxmCreateRenderTarget` fallaba, el FBO quedaba sin render target, `sceGxmBeginScene` fallaba y todos los comandos GXM siguientes se emitían fuera de escena.
+  - Revisión de corridas 22-24: los dumps de 23 y 24 son idénticos (mismo PC/registros, ~18 s tras arrancar, al crearse el HUD): los fixes de tile clipper/glFlush/escenas no tocaron la causa. Causa real: `set_character_alpha()` en `source/patch.c` llamaba a funciones gameswf del guest por puntero C directo, sin `call_guest` -> el código iOS pisa r9 (callee-saved en Vita) y corrompe el estado del host.
+  - Fix:
+    1. `source/patch.c`: las 5 llamadas a gameswf (tu_string, as_value, set_member) pasan por `call_guest`. ABI de `as_value(double)` verificada con otool: double en r1:r2. La opacidad se re-aplica si el HUD se recrea (nuevo nivel).
+    2. `source/gles.c`: quitado `vglSetupRenderTargetScenesNum` y restaurado `D(glFlush)` como en el build jugable 7e6ebbe (eran fixes de un diagnóstico erróneo).
+    3. `vendor/vitaGL/source/gxm.c`: `vglSetupRenderTargetScenesNum` acota a `[1, 8]`.
+
+- [x] Corrida 26 (`logs/log_026.log` + Core Dump `skaternation-psp2core-1792471843-0x001bad2f0d-eboot.bin.psp2dmp`): crash en la pantalla de carga, mismos registros que 22/23/24 (el fix de r9 de la corrida 25 no era la causa: el loader ya compila con `-ffixed-r9`).
+  - Pila resuelta con atos (guest base 0x98000000): `Application::_Draw` -> `irr::video::CCommonGLDriver::endScene()+28` -> stub 0x4d7f14 = `_glFlush` (otool -Iv) -> vitaGL `glFlush` -> `scene_reset` (termina y reabre la escena del FBO 320x480) -> `glViewport` -> Data Abort en `SceGxm seg1 + 0xa548`.
+  - Fix: `source/gles.c` mapea `glFlush` a `g_glNoop` (solo, sin cambiar escenas por frame; en la corrida 24 se aplicó junto a `(4, 16)`, que rompió el arranque y nunca se llegó a probar).
+
+- [ ] Corrida 27 (`logs/log_027.log` + Core Dump `skaternation-psp2core-1792472151-0x001d2625ff-eboot.bin.psp2dmp`): con `glFlush` en no-op el crash **se movió**: misma instrucción en SceGxm (`seg1 + 0xa548`, `sceGxmSetViewport` tras un `sceGxmBeginScene` fallido) pero ahora desde `gles_present` -> `glClear` sobre la pantalla (gles.c:503) -> `scene_reset`. Conclusión: a partir de cierto punto de la carga *cualquier* BeginScene falla (FBO o display); `glFlush` era solo el primero en tropezar. El no-op de `glFlush` se mantiene.
+  - Experimento: **audio pausado** para descartarlo. `source/coreaudio.c`: `#define AUDIO_ENABLED 0` selecciona una tabla de imports con stubs mudos (OpenAL con dispositivo/contexto falsos no nulos, IDs secuenciales, `AL_SOURCE_STATE` = `AL_STOPPED`; `AudioOutputUnitStart` no crea el hilo `coreaudio`). La implementación real (OpenAL de openal-soft + RemoteIO sobre sceAudioOut) queda intacta en la rama `#if AUDIO_ENABLED`; para reactivar, poner `1`.
+  - Puntos de acceso del audio (todos en `source/coreaudio.c`): tabla `coreaudio_imports` (OpenAL `al*`/`alc*`, `AudioComponent*`, `AudioUnit*`, `AudioOutputUnitStart/Stop`, `AudioSession*`), registrada en `source/imports.c:16`. Ningún otro archivo llama a OpenAL ni a sceAudioOut.
+  - Nota: el crash ya ocurría en la corrida 22, antes de los cambios de audio (puerto MAIN, wrappers OpenAL, commit 56d62fc); el audio original de 7e6ebbe sí estaba activo. Si el crash persiste sin audio, siguiente sospechoso: el resto del delta 7e6ebbe -> 297e1cc (`wide_begin` solo en perspectiva, opacidad del HUD, scissor).
+
+- [ ] Corrida 28 (`logs/log_028.log` + Core Dump `skaternation-psp2core-1792472379-0x000d3a2b75-eboot.bin.psp2dmp`): con el audio pausado el crash cambió a código del juego, antes (cargando `*.gmap`).
+  - Pila (atos): `Application::LoadOrientationStyle()` -> `SetStatusBarOrientation(bool)+264`: `ldr r3, [WorldManager::GetInstance() + 0x4528]` = `0x1a000003` (basura) -> `ldr [r3, #0x60]` -> Data Abort.
+  - Causa raíz: `WorldManager` se crea con `operator new(0x46d0)` y su constructor pone a cero `+0x4520/+0x4524/+0x4534` pero nunca `+0x4528`. En iOS la memoria nueva llega en cero; newlib devuelve basura. El juego depende de memoria inicializada en cero, así que el lugar del crash depende de cómo esté el heap: explica por qué los crashes "se mueven" al cambiar cosas no relacionadas (audio, widescreen, HUD). Probablemente también sea la causa de fondo del crash de SceGxm (22-27).
+  - Fix: `source/cxx.c`: `__Znwm`/`__Znam`/`__ZnwmRKSt9nothrow_t` -> `cxx_new_zeroed` (calloc). `source/darwin.c`: `malloc` -> `d_malloc` (calloc). El audio sigue pausado (un cambio por corrida).
+
+- [ ] Corrida 29 (`logs/log_029.log` + Core Dump `skaternation-psp2core-1792472728-0x000ac52a97-eboot.bin.psp2dmp`): el crash de `WorldManager` desapareció (fix de memoria en cero OK) y volvió el de SceGxm en la carga: `gles_present` -> `glClear` (pantalla) -> `scene_reset` -> `sceGxmSetViewport` abort. Mismos registros que en 22-27.
+  - Descartados con evidencia: audio (stubs mudos, sin puerto ni hilo) y opacidad del HUD (`HUD controls opacity set` nunca aparece en el log, así que `set_member` no corrió).
+  - Instrumentación (sin fix especulativo): `vendor/vitaGL/source/gxm.c` reporta vía `GXM_REPORT` cualquier error de `sceGxmEndScene`, `sceGxmBeginScene` (display/fbo) y `sceGxmCreateRenderTarget` a `vgl_gxm_error_hook()` (weak, definido en `source/gles.c`), que lo escribe en el log con la memoria libre de VRAM/RAM/PHYCONT de vitaGL (máx. 16 líneas). `vgl_log` no sirve: va a `sceClibPrintf`, no al archivo.
+  - Próxima corrida: leer las líneas `vitaGL: ... = 0x8xxxxxxx` del log para saber POR QUÉ falla la escena (errcode con `psvita-toolkit errcode`).
+
+- [ ] Corrida 30 (`logs/log_030.log` + Core Dump `skaternation-psp2core-1792472976-0x0008452829-eboot.bin.psp2dmp`): mismo abort en `SceGxm seg1 + 0xa548` desde `gles_present -> glClear -> scene_reset -> glViewport`, pero **ninguna** línea `vitaGL: ...` en el log: `sceGxmBeginScene`/`sceGxmEndScene`/`sceGxmCreateRenderTarget` NO fallan. La hipótesis de "escena fallida" (corridas 24-29) era incorrecta.
+  - Contexto GXM en el dump (`0x81c05c18`) íntegro, sin datos del guest; viewport de pantalla en `+0x1f0` coherente (480/480/272/-272). Los registros son idénticos en todas las corridas: fallo determinista dentro de SceGxm, no basura aleatoria. El código de SceGxm no está en el dump (no se usa Vita3K para obtenerlo).
+  - Bisección: lo único del delta 7e6ebbe -> 297e1cc que corre en la carga (opacidad nunca se ejecuta, audio mudo) es la parte gráfica de `source/gles.c`. Se restauró **exactamente** el bloque de 7e6ebbe (scissor con `wide_span`/`apply_scissor` cacheado, `g_glClear`, `g_glCopyTex*`, `wide_begin` sobre todas las proyecciones, `D(glFlush)` real) y `source/input.c` (táctil `(x-72)*480/816`). Se mantienen: memoria en cero, hook GXM, audio mudo.
+  - Si pasa la carga: el bug está en el widescreen de 297e1cc; reintroducirlo en partes (primero `wide_begin` solo perspectiva, luego quitar `wide_span`). Si no: el bug está en lo que queda (vendor vitaGL, `patch.c`, `darwin.c`).
+
+- [x] Corrida 31 (`logs/log_031.log`): **sin crash**, juego jugable. Confirmado: el crash de SceGxm (22-30) venía del widescreen de 297e1cc. Pero ~7 FPS.
+  - Causa de los FPS: build Debug (`DEBUG_LOADER`) + `AudioSessionGetProperty('othr')` logueado con `l_debug` (fflush síncrono a ux0, ~10 ms por línea) varias veces por frame (878 líneas en el log). Mismo problema ya visto en la corrida 20; el build de 30 FPS de 7e6ebbe era Release (sin `l_debug`).
+  - Fix: `source/coreaudio.c` responde `'othr'` (OtherAudioIsPlaying = 0) sin loguear.
+
 ## ÚNICO PASO PENDIENTE: prueba en consola física
 
 Con la Vita conectada a 192.168.3.15 (VitaShell / FTP activo):
@@ -234,3 +270,11 @@ Con la Vita conectada a 192.168.3.15 (VitaShell / FTP activo):
    - GATE-4: diálogos/menús legibles.
    - GATE-5: música y efectos suenan.
 5. [ ] Si hay crash: `deploy_data.py --logs` → `psvita-toolkit analyze <dump>.psp2dmp --elf build/skaternation.elf`; PC en `0x98xxxxxx` − `0x98000000` = offset en Mach-O (`tools/annotate.py`).
+
+- [ ] Corrida 32 (`logs/log_032.log`, Release): sin crash, sigue a 7-8 FPS sin logs por frame -> el cuello de botella NO es el log. Barras negras visibles con el método de ZI (WIDE_K 816/960).
+  - Cambios para corrida 33: pantalla completa como Blades of Fury (`gles.c`: `WIDE_K 1.0`, `wide_target()` -> 0, estiramiento simple 480->960; `input.c`: toque `x*480/960`). Audio reactivado (`AUDIO_ENABLED 1`).
+  - Instrumentación: `gles_present` escribe cada 5 s `perf: N fps, frame X ms, swap Y ms` (swap = dentro de `vglSwapBuffers`; frame - swap = juego + GL). Decide la próxima optimización.
+
+- [x] Corrida 33 (`logs/log_033.log`): pantalla completa sin barras, audio OK, **25-28 FPS en juego** (`perf: ... swap 0.1-0.3 ms`: el tiempo es del juego/CPU, no de la GPU). Quedaba visible el aro del D-pad.
+  - Causa: offsets de `update_hud_opacity` mal etiquetados. Nombres reales (`HudMenu::Init` -> `RenderFX::Find`, base hud+0x1000): `+0x254 btn_map`, `+0x258 mc_map`, `+0x25c mc_thumb`, `+0x260 btn_dpad`, `+0x264 mc_pad`, `+0x28c mc_btn_a`, `+0x294 mc_btn_b`. Se ocultaba `mc_map` por error y nunca `mc_pad` (el aro).
+  - Fix: `source/patch.c` oculta `+0x1264` (mc_pad) en lugar de `+0x1258` (mc_map).

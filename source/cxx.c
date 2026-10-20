@@ -9,6 +9,8 @@
  *          here. The guest inlines ifstream/ofstream ctors/dtors with its layout, so the vtables/VTTs are
  *          copies with the basic_ios virtual-base offset moved and __basic_file calls re-based (see below).
  */
+#include <stdlib.h>
+
 #include "imports.h"
 #include "log.h"
 
@@ -138,6 +140,16 @@ __attribute__((constructor)) static void cxx_fstream_init(void) {
 // Host C++ exceptions cannot unwind the guest's SjLj frames: report and stop.
 static void cxx_throw(const char *what) { fatal_error("libstdc++ threw: %s", what ? what : "bad_alloc"); }
 
+// iOS hands out zero-filled fresh memory and the game relies on it: WorldManager's ctor never sets
+// +0x4528, and newlib garbage there crashes SetStatusBarOrientation (run 28).
+static void *cxx_new_zeroed(size_t n) {
+    void *p = calloc(1, n ? n : 1);
+    if (!p)
+        cxx_throw(NULL);
+    return p;
+}
+static void *cxx_new_zeroed_nothrow(size_t n, const void *tag) { return calloc(1, n ? n : 1); }
+
 const import_entry cxx_imports[] = {
     F_RAW("__ZN9__gnu_cxx18__exchange_and_addEPVii", cxx_f0),
     F_RAW("__ZNKSs4findEPKcm", cxx_f1),
@@ -216,9 +228,9 @@ const import_entry cxx_imports[] = {
     F_RAW("__ZdaPv", cxx_f74),
     F_RAW("__ZdlPv", cxx_f75),
     F_RAW("__ZdlPvRKSt9nothrow_t", cxx_f76),
-    F_RAW("__Znam", cxx_f77),
-    F_RAW("__Znwm", cxx_f78),
-    F_RAW("__ZnwmRKSt9nothrow_t", cxx_f79),
+    F_RAW("__Znam", cxx_new_zeroed),
+    F_RAW("__Znwm", cxx_new_zeroed),
+    F_RAW("__ZnwmRKSt9nothrow_t", cxx_new_zeroed_nothrow),
     F_RAW("___cxa_begin_catch", cxx_f80),
     F_RAW("___cxa_end_catch", cxx_f81),
     F_RAW("___cxa_rethrow", cxx_f82),

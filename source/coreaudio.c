@@ -179,6 +179,8 @@ static int as_GetProperty(uint32_t id, uint32_t *size, void *data) {
     case FOURCC('c', 'h', 'o', 'l'): // CurrentHardwareOutputLatency (Float32)
         *(float *)data = 0.012f;
         break;
+    case FOURCC('o', 't', 'h', 'r'): // OtherAudioIsPlaying = 0; polled every frame, so never logged
+        break;
     default:
         l_debug("AudioSessionGetProperty('%c%c%c%c') -> 0", id >> 24, (id >> 16) & 0xFF, (id >> 8) & 0xFF, id & 0xFF);
     }
@@ -262,6 +264,12 @@ static void *al_GetProcAddress(ALCdevice *dev, const ALCchar *name) {
 
 #define D(name) {"_" #name, (uintptr_t)(name)}
 
+// Audio PAUSADO (corrida 27) para descartar el audio como causa del crash de SceGxm en la pantalla
+// de carga. 1 = OpenAL + RemoteIO reales; 0 = stubs mudos (no se abre sceAudioOut ni se crean hilos).
+// No se borró nada: la tabla real queda intacta en la rama #if.
+#define AUDIO_ENABLED 1
+
+#if AUDIO_ENABLED
 const import_entry coreaudio_imports[] = {
     D(alDeleteBuffers), D(alDeleteSources), D(alDistanceModel), F(alGenBuffers, wrap_alGenBuffers), F(alGenSources, wrap_alGenSources),
     D(alGetError), D(alGetSourcei), D(alListenerfv), D(alSource3f), D(alSourcePause), F(alSourcePlay, wrap_alSourcePlay),
@@ -279,4 +287,34 @@ const import_entry coreaudio_imports[] = {
     // imported via __nl_symbol_ptr (function pointer): requires code stub, not data
     F(AudioSessionRemovePropertyListenerWithUserData, ok),
 };
+#else
+// Stubs mudos: el juego ve un OpenAL válido (dispositivo/contexto no nulos, IDs únicos, fuentes
+// siempre detenidas) pero no se reproduce nada.
+static uint32_t fake_alc[16];
+static void *mute_handle(void) { return fake_alc; }
+static int mute_true(void) { return 1; }
+static void mute_gen(ALsizei n, ALuint *ids) {
+    static ALuint next = 1;
+    for (ALsizei i = 0; i < n; i++)
+        ids[i] = next++;
+}
+static void mute_getsourcei(ALuint src, ALenum param, ALint *v) { *v = param == AL_SOURCE_STATE ? AL_STOPPED : 0; }
+
+const import_entry coreaudio_imports[] = {
+    F(alDeleteBuffers, ok), F(alDeleteSources, ok), F(alDistanceModel, ok), F(alGenBuffers, mute_gen), F(alGenSources, mute_gen),
+    F(alGetError, ok), F(alGetSourcei, mute_getsourcei), F(alListenerfv, ok), F(alSource3f, ok), F(alSourcePause, ok), F(alSourcePlay, ok),
+    F(alSourceQueueBuffers, ok), F(alSourceStop, ok), F(alSourceUnqueueBuffers, ok), F(alSourcef, ok), F(alSourcefv, ok),
+    F(alSourcei, ok), F(alcCloseDevice, mute_true), F(alcCreateContext, mute_handle), F(alcDestroyContext, ok),
+    F(alcMakeContextCurrent, mute_true), F(alcOpenDevice, mute_handle), F(alcProcessContext, ok), F(alcSuspendContext, ok),
+    F(alBufferData, ok), F(alcGetContextsDevice, mute_handle), F(alcGetCurrentContext, mute_handle),
+    F(alcGetProcAddress, al_GetProcAddress), F(alBufferDataStatic, ok),
+    F(AudioComponentFindNext, au_FindNext), F(AudioComponentInstanceNew, au_InstanceNew),
+    F(AudioComponentInstanceDispose, au_Dispose), F(AudioUnitSetProperty, au_SetProperty),
+    F(AudioUnitGetProperty, au_GetProperty), F(AudioUnitInitialize, ok), F(AudioUnitUninitialize, ok),
+    F(AudioOutputUnitStart, ok), F(AudioOutputUnitStop, ok), F(AudioUnitRender, au_Render), // sin hilo de audio
+    F(AudioSessionInitialize, ok), F(AudioSessionSetActive, ok), F(AudioSessionSetProperty, ok),
+    F(AudioSessionGetProperty, as_GetProperty), F(AudioSessionAddPropertyListener, ok),
+    F(AudioSessionRemovePropertyListenerWithUserData, ok),
+};
+#endif
 const int coreaudio_imports_count = sizeof(coreaudio_imports) / sizeof(coreaudio_imports[0]);

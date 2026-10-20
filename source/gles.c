@@ -9,6 +9,7 @@
  *          Float gl* entry points map directly: the loader and vitaGL (SOFTFP_ABI=1) use the iOS softfp ABI.
  *          GL_FIXED vertex arrays are converted to float immediately before draw calls.
  */
+#include <psp2/kernel/processmgr.h>
 #include <stdlib.h>
 #include <string.h>
 #include <vitaGL.h>
@@ -32,7 +33,7 @@
 #define DST_H SCR_H
 #define DST_W SCR_W
 #define DST_X 0
-#define WIDE_K (816.0f / 960.0f)
+#define WIDE_K 1.0f
 
 #define GL_FRAMEBUFFER_COMPLETE_OES 0x8CD5
 #define GL_RENDERBUFFER_WIDTH_OES 0x8D42
@@ -330,23 +331,57 @@ static void g_glDeleteFramebuffersOES(GLsizei n, const GLuint *ids) {
 // ---------------------------------------------------------------- widescreen (see WIDE_K)
 
 static GLuint bound_fb;
+static GLint scissor_box[4];
+static int scissor_wide = -1; // state the real scissor box was last set for
 
 static void g_glBindFramebufferOES(GLenum target, GLuint fb) {
     bound_fb = fb;
     glBindFramebuffer(GL_FRAMEBUFFER, fb);
 }
-static int wide_target(void) { return fbo && bound_fb == fbo; }
+static int wide_target(void) { return 0; /* fullscreen stretch like Blades of Fury: no black bars */ }
 
+// Screen-horizontal = framebuffer Y (the 320x480 framebuffer is portrait): Y spans are scaled
+// around the framebuffer center.
+static void wide_span(GLint *y, GLsizei *h) {
+    float c = FB_H / 2.0f;
+    *y = (GLint)(c + (*y - c) * WIDE_K);
+    *h = (GLsizei)(*h * WIDE_K + 0.5f);
+}
+static void apply_scissor(void) {
+    int w = wide_target();
+    if (w == scissor_wide)
+        return;
+    GLint x = scissor_box[0], y = scissor_box[1];
+    GLsizei sw = scissor_box[2], sh = scissor_box[3];
+    if (w)
+        wide_span(&y, &sh);
+    glScissor(x, y, sw, sh);
+    scissor_wide = w;
+}
 static void g_glScissor(GLint x, GLint y, GLsizei w, GLsizei h) {
-    if (w < 1) w = 1;
-    if (h < 1) h = 1;
-    glScissor(x, y, w, h);
+    scissor_box[0] = x, scissor_box[1] = y, scissor_box[2] = w, scissor_box[3] = h;
+    scissor_wide = -1;
+    apply_scissor();
+}
+static void g_glClear(GLbitfield mask) {
+    apply_scissor();
+    glClear(mask);
+}
+static void g_glCopyTexImage2D(GLenum t, GLint l, GLenum f, GLint x, GLint y, GLsizei w, GLsizei h, GLint b) {
+    if (wide_target())
+        wide_span(&y, &h);
+    glCopyTexImage2D(t, l, f, x, y, w, h, b);
+}
+static void g_glCopyTexSubImage2D(GLenum t, GLint l, GLint xo, GLint yo, GLint x, GLint y, GLsizei w, GLsizei h) {
+    if (wide_target())
+        wide_span(&y, &h);
+    glCopyTexSubImage2D(t, l, xo, yo, x, y, w, h);
 }
 
-// Around each 3D perspective draw into the window framebuffer: scale clip Y by WIDE_K (= 816/960)
-// to widen horizontal FOV by 960/816. When the 480-wide FBO is scaled to the native 960x544 PS Vita
-// screen, the 3D world renders in full screen with true 16:9 aspect ratio and zero horizontal stretching.
+// Around each draw into the window framebuffer: projection P -> S * P, S scaling clip Y by WIDE_K
+// (row 1 of the column-major matrix). Restored right after, so the game's matrices never change.
 static int wide_begin(void) {
+    apply_scissor();
     if (!wide_target())
         return 0;
     GLint mode;
@@ -355,16 +390,10 @@ static int wide_begin(void) {
     glMatrixMode(GL_PROJECTION);
     glPushMatrix();
     glGetFloatv(GL_PROJECTION_MATRIX, p);
-    // In OpenGL: perspective projection has p[15] == 0.0f and p[11] != 0.0f.
-    // Orthographic (2D Flash UI / menus) has p[15] == 1.0f and p[11] == 0.0f.
-    if (p[15] == 0.0f && p[11] != 0.0f) {
-        p[1] *= WIDE_K, p[5] *= WIDE_K, p[9] *= WIDE_K, p[13] *= WIDE_K;
-        glLoadMatrixf(p);
-        glMatrixMode(mode);
-        return 1;
-    }
+    p[1] *= WIDE_K, p[5] *= WIDE_K, p[9] *= WIDE_K, p[13] *= WIDE_K;
+    glLoadMatrixf(p);
     glMatrixMode(mode);
-    return 0;
+    return 1;
 }
 static void wide_end(int on) {
     if (!on)
@@ -417,9 +446,17 @@ static void g_glNoop(void) {}
 
 // ---------------------------------------------------------------- init / present
 
+// Called by the patched vitaGL (gxm.c GXM_REPORT) on any failed sceGxm scene call, before SceGxm
+// aborts on the next command (runs 22-29). Capped so a per-frame failure cannot flood the log.
+void vgl_gxm_error_hook(const char *what, int code) {
+    static int n;
+    if (n++ < 16)
+        l_error("vitaGL: %s = 0x%08X (free VRAM %u KB, RAM %u KB, PHYCONT %u KB)", what, code,
+                vglMemFree(VGL_MEM_VRAM) / 1024, vglMemFree(VGL_MEM_RAM) / 1024, vglMemFree(VGL_MEM_PHYCONT) / 1024);
+}
+
 void gles_init(void) {
     vglUseTripleBuffering(GL_FALSE);
-    vglSetupRenderTargetScenesNum(4, 16);
     vglInitExtended(0, SCR_W, SCR_H, 8 * 1024 * 1024, SCE_GXM_MULTISAMPLE_NONE);
     glGenTextures(1, &fbo_tex);
     glBindTexture(GL_TEXTURE_2D, fbo_tex);
@@ -506,7 +543,21 @@ void gles_present(int rotate180) {
     glTexCoordPointer(2, GL_FLOAT, 0, rotate180 ? uv1 : uv3);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     patch_overlay(); // loader OSD on the 960x544 screen (scissor + clear only)
+    // Perf line every 5 s (Release too): frame = present to present, swap = inside vglSwapBuffers.
+    static uint64_t t_win, swap_us;
+    static int frames;
+    uint64_t t0 = sceKernelGetProcessTimeWide();
     vglSwapBuffers(ime_active()); // GL_TRUE while system dialog is active
+    uint64_t t1 = sceKernelGetProcessTimeWide();
+    swap_us += t1 - t0;
+    frames++;
+    if (!t_win)
+        t_win = t1;
+    if (t1 - t_win >= 5000000) {
+        l_info("perf: %.1f fps, frame %.1f ms, swap %.1f ms", frames * 1e6 / (t1 - t_win),
+               (t1 - t_win) / 1000.0 / frames, swap_us / 1000.0 / frames);
+        t_win = t1, frames = 0, swap_us = 0;
+    }
 
     // Restore guest OpenGL state.
     glPopMatrix();
@@ -549,9 +600,9 @@ void gles_present(int rotate180) {
 #define D(name) {"_" #name, (uintptr_t)(name)}
 
 const import_entry gles_imports[] = {
-    F(glFlush, g_glNoop), D(glFrustumf), D(glOrthof), // used by Skater Nation, absent in Zombie Infection
-    D(glActiveTexture), D(glBindTexture), D(glBlendFunc), D(glClear), D(glCopyTexImage2D),
-    D(glCopyTexSubImage2D), D(glDeleteTextures), D(glDepthMask), D(glDisable), F(glDisableClientState, g_glDisableClientState),
+    D(glFlush), D(glFrustumf), D(glOrthof), // used by Skater Nation, absent in Zombie Infection
+    D(glActiveTexture), D(glBindTexture), D(glBlendFunc), F(glClear, g_glClear), F(glCopyTexImage2D, g_glCopyTexImage2D),
+    F(glCopyTexSubImage2D, g_glCopyTexSubImage2D), D(glDeleteTextures), D(glDepthMask), D(glDisable), F(glDisableClientState, g_glDisableClientState),
     D(glEnable), F(glEnableClientState, g_glEnableClientState), D(glGenTextures), D(glGetIntegerv), D(glIsEnabled),
     D(glLoadIdentity), D(glLoadMatrixx), D(glMatrixMode), D(glOrthox), D(glPopMatrix), D(glPushMatrix),
     D(glRotatex), D(glScalex), F(glScissor, g_glScissor), D(glShadeModel), D(glTexImage2D), D(glTexParameteri),

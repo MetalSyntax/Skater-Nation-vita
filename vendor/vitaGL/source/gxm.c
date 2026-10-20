@@ -23,6 +23,10 @@
 
 #include "shared.h"
 
+// Skater Nation port: lets the loader log GXM failures to its file log before SceGxm aborts.
+extern void vgl_gxm_error_hook(const char *what, int code) __attribute__((weak));
+#define GXM_REPORT(what, r) do { if ((r) && vgl_gxm_error_hook) vgl_gxm_error_hook(what, r); } while (0)
+
 #define MAX_SCENES_PER_FRAME 8 // Maximum amount of scenes per frame allowed by sceGxm per render target
 
 // FIXME: Since we use our own default uniform buffers circular pool, fragment and vertex buffer rings can likely be reduced in size
@@ -571,7 +575,8 @@ void start_shader_patcher(void) {
 static inline __attribute__((always_inline)) void scene_end(void) {
 	// Ends current gxm scene
 	query_fence.value++;
-	sceGxmEndScene(gxm_context, NULL, &query_fence);
+	int r = sceGxmEndScene(gxm_context, NULL, &query_fence);
+	GXM_REPORT("sceGxmEndScene", r);
 	if (system_app_mode && vsync_interval)
 		sceDisplayWaitVblankStartMulti(vsync_interval);
 }
@@ -623,6 +628,7 @@ void scene_reset(void) {
 				gxm_sync_objects[gxm_back_buffer_index],
 				&gxm_color_surfaces[gxm_back_buffer_index],
 				&gxm_depth_stencil_surface);
+			GXM_REPORT("sceGxmBeginScene(display)", r);
 #ifdef LOG_ERRORS
 			if (r) {
 				vgl_log("%s:%d Scene reset failed due to sceGxmBeginScene erroring (%s) on display.\n", __FILE__, __LINE__, get_gxm_error_literal(r));
@@ -647,6 +653,7 @@ void scene_reset(void) {
 				active_write_fb->target = (SceGxmRenderTarget *)get_free_render_target(active_write_fb->width, active_write_fb->height);
 #else
 				int r = setup_render_target(&active_write_fb->target, active_write_fb->width, active_write_fb->height, gxm_fbo_rt_size);
+				GXM_REPORT("sceGxmCreateRenderTarget(fbo)", r);
 #ifdef LOG_ERRORS
 				if (r) {
 					vgl_log("%s:%d Failed to create a rendertarget of size %dx%d for framebuffer 0x%08X (%s).\n", __FILE__, __LINE__, active_write_fb->width, active_write_fb->height, active_write_fb, get_gxm_error_literal(r));
@@ -675,6 +682,7 @@ void scene_reset(void) {
 					NULL, NULL, NULL,
 					&active_write_fb->colorbuffer,
 					active_write_fb->depthbuffer_ptr);
+			GXM_REPORT("sceGxmBeginScene(fbo)", r);
 #ifdef LOG_ERRORS
 			if (r)
 				vgl_log("%s:%d Scene reset failed due to sceGxmBeginScene erroring (%s) on framebuffer 0x%08X.\n", __FILE__, __LINE__, get_gxm_error_literal(r), active_write_fb);
@@ -1008,6 +1016,7 @@ void vglSetupRenderTargetScenesNum(uint8_t size_main, uint8_t size_fbos) {
 		SET_GL_ERROR_WITH_VALUE(GL_INVALID_VALUE, size_fbos)
 	}
 #endif
-	gxm_display_rt_size = size_main;
-	gxm_fbo_rt_size = size_fbos;
+	// Clamp: out-of-range values make sceGxmCreateRenderTarget fail silently
+	gxm_display_rt_size = size_main > MAX_SCENES_PER_FRAME ? MAX_SCENES_PER_FRAME : (size_main ? size_main : 1);
+	gxm_fbo_rt_size = size_fbos > MAX_SCENES_PER_FRAME ? MAX_SCENES_PER_FRAME : (size_fbos ? size_fbos : 1);
 }

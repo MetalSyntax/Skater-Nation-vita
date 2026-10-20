@@ -34,24 +34,15 @@ static void set_character_alpha(uintptr_t ch, double alpha_pct) {
     if (!ch || ch < 0x81000000 || ch >= 0x99000000)
         return;
 
-    typedef void (*tu_ctor_t)(void *self, const char *str);
-    typedef void (*tu_dtor_t)(void *self);
-    typedef void (*as_ctor_t)(void *self, uint32_t val_lo, uint32_t val_hi);
-    typedef void (*as_dtor_t)(void *self);
-    typedef bool (*set_mem_t)(void *ch, const void *name, const void *val);
-
-    static tu_ctor_t tu_ctor = NULL;
-    static tu_dtor_t tu_dtor = NULL;
-    static as_ctor_t as_ctor = NULL;
-    static as_dtor_t as_dtor = NULL;
-    static set_mem_t set_mem = NULL;
+    // Guest (iOS) code: must go through call_guest, which preserves r9 (scratch on iOS).
+    static void *tu_ctor, *tu_dtor, *as_ctor, *as_dtor, *set_mem;
 
     if (!tu_ctor) {
-        tu_ctor = (tu_ctor_t)macho_sym("__ZN7gameswf9tu_stringC1EPKc");
-        tu_dtor = (tu_dtor_t)macho_sym("__ZN7gameswf9tu_stringD1Ev");
-        as_ctor = (as_ctor_t)macho_sym("__ZN7gameswf8as_valueC1Ed");
-        as_dtor = (as_dtor_t)macho_sym("__ZN7gameswf8as_valueD1Ev");
-        set_mem = (set_mem_t)macho_sym("__ZN7gameswf9character10set_memberERKNS_10tu_stringiERKNS_8as_valueE");
+        tu_ctor = (void *)macho_sym("__ZN7gameswf9tu_stringC1EPKc");
+        tu_dtor = (void *)macho_sym("__ZN7gameswf9tu_stringD1Ev");
+        as_ctor = (void *)macho_sym("__ZN7gameswf8as_valueC1Ed");
+        as_dtor = (void *)macho_sym("__ZN7gameswf8as_valueD1Ev");
+        set_mem = (void *)macho_sym("__ZN7gameswf9character10set_memberERKNS_10tu_stringiERKNS_8as_valueE");
     }
 
     if (!tu_ctor || !tu_dtor || !as_ctor || !as_dtor || !set_mem)
@@ -60,18 +51,19 @@ static void set_character_alpha(uintptr_t ch, double alpha_pct) {
     char str_buf[64] = {0};
     char val_buf[64] = {0};
 
-    tu_ctor(str_buf, "_alpha");
+    call_guest(tu_ctor, (uint32_t)str_buf, (uint32_t)"_alpha", 0, 0);
     union {
         double d;
         struct { uint32_t lo, hi; } u;
     } dv;
     dv.d = alpha_pct;
-    as_ctor(val_buf, dv.u.lo, dv.u.hi);
+    // iOS softfp: as_value(double) takes the double in r1:r2 (verified in the binary)
+    call_guest(as_ctor, (uint32_t)val_buf, dv.u.lo, dv.u.hi, 0);
 
-    set_mem((void *)ch, str_buf, val_buf);
+    call_guest(set_mem, (uint32_t)ch, (uint32_t)str_buf, (uint32_t)val_buf, 0);
 
-    as_dtor(val_buf);
-    tu_dtor(str_buf);
+    call_guest(as_dtor, (uint32_t)val_buf, 0, 0, 0);
+    call_guest(tu_dtor, (uint32_t)str_buf, 0, 0, 0);
 }
 
 static void update_hud_opacity(void) {
@@ -100,15 +92,18 @@ static void update_hud_opacity(void) {
     if (dpad < 0x81000000 || dpad >= 0x99000000)
         return;
 
+    // Re-apply when the HUD is rebuilt (new level) or the L+R toggle changes the value.
     static float last_applied_alpha = -1.0f;
-    if (last_applied_alpha == hud_alpha)
+    static uintptr_t last_btn_a;
+    if (last_applied_alpha == hud_alpha && last_btn_a == btn_a)
         return;
+    last_btn_a = btn_a;
 
-    // Set 1% opacity only on joystick and buttons A/B:
-    // btn_dpad (+0x1260), mc_pad (+0x125c), mc_thumb (+0x1258)
+    // Set 1% opacity only on joystick and buttons A/B. Names from HudMenu::Init (RenderFX::Find):
+    // +0x1258 is mc_map (the minimap, left visible), +0x125c mc_thumb, +0x1260 btn_dpad, +0x1264 mc_pad.
     set_character_alpha(dpad, (double)hud_alpha);
-    set_character_alpha(*(uintptr_t *)(hud + 0x125c), (double)hud_alpha); // mc_pad
-    set_character_alpha(*(uintptr_t *)(hud + 0x1258), (double)hud_alpha); // mc_thumb
+    set_character_alpha(*(uintptr_t *)(hud + 0x125c), (double)hud_alpha); // mc_thumb
+    set_character_alpha(*(uintptr_t *)(hud + 0x1264), (double)hud_alpha); // mc_pad (ring)
     // mc_btn_a (+0x128c)
     set_character_alpha(btn_a, (double)hud_alpha);
     // mc_btn_b (+0x1294)

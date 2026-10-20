@@ -47,7 +47,7 @@ void input_poll(void) {
         touches[i].id = t.report[i].id;
         touches[i].x = t.report[i].x / 2;
         touches[i].y = t.report[i].y / 2;
-        // Fullscreen 960x544 mapping to 480x320 landscape (no black bars)
+        // Full screen mapping to 480x320 landscape on 960x544 (matches the stretched blit in gles.c)
         int gx = touches[i].x * 480 / 960;
         int gy = touches[i].y * 320 / 544;
         touches[i].gx = gx < 0 ? 0 : gx > 479 ? 479 : gx;

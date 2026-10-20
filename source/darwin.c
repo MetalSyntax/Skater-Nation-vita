@@ -702,9 +702,12 @@ static double ull_tod(unsigned long long a) { return (double)a; }
 #define D(name) {"_" #name, (uintptr_t)(name)} // identical signature in newlib
 #define V(name, ptr) {"_" #name, (uintptr_t)(ptr), 1} // data symbol, not function
 
+// iOS gives the game zero-filled fresh memory; newlib does not (see cxx_new_zeroed in cxx.c).
+static void *d_malloc(size_t n) { return calloc(1, n); }
+
 const import_entry darwin_imports[] = {
     // memory / strings
-    D(malloc), D(calloc), D(realloc), D(free), D(memcpy), D(memmove), D(memset), D(memcmp),
+    F(malloc, d_malloc), D(calloc), D(realloc), D(free), D(memcpy), D(memmove), D(memset), D(memcmp),
     D(memchr), D(bzero), F(strlen, d_strlen), F(strcmp, d_strcmp), F(strcpy, d_strcpy), F(strncpy, d_strncpy), F(strstr, d_strstr), D(strtok),
     F(atoi, d_atoi), D(atol), F(atof, d_atof), D(strtol), F(strtod, d_strtod), F(strcat, d_strcat), D(strchr), D(strrchr), D(strcspn), F(strncmp, d_strncmp),
     F(strcasecmp, d_strcasecmp), D(strncasecmp), D(strlcpy), F(__tolower, d___tolower), D(wcscmp), D(wcscpy),
