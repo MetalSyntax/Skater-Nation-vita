@@ -5,7 +5,7 @@
 
 <p align="center">
   <a href="#status">Status</a> •
-  <a href="#active-issue">Active Issue</a> •
+  <a href="#performance">Performance</a> •
   <a href="#installation-players">Installation</a> •
   <a href="#controls">Controls</a> •
   <a href="#building-developers">Building</a> •
@@ -20,33 +20,32 @@ The runtime was adopted from [`Zombie-Infection-vita`](../Zombie-Infection-vita)
 
 ## Status
 
-**Status: BLOCKED (regression).** Commit `7e6ebbe` was playable. Since `297e1cc` (16:9 fullscreen + HUD opacity), the game crashes during startup or level loading. See [Active Issue](#active-issue).
+**Status: PLAYABLE.** The SceGxm loading crash is fixed (run 31). Gameplay runs at 25–28 FPS in fullscreen with audio (run 33). See [`RELEASE.md`](RELEASE.md) for GitHub release notes and installation instructions.
+
+<p align="center">
+  <img src="screenshots/gameplay_01.jpg" alt="Skater Nation PS Vita Gameplay" width="700">
+</p>
 
 - [x] **Mach-O loader**: fixed base `MACHO_SLIDE = 0x98000000`, **60,307** rebase words, **8,796** import slots (24 unimplemented), **142** global constructors. *Verified on console.*
-- [x] **Graphics**: GLES 1.x → vitaGL (`SOFTFP_ABI=1`). The game draws into a 320×480 portrait FBO that is rotated and scaled to 960×544. *Verified on console (7e6ebbe).*
-- [x] **Touch & physical controls**: buttons and sticks inject synthetic touches on the game's own HUD. *Verified on console (7e6ebbe).*
+- [x] **Graphics**: GLES 1.x → vitaGL (`SOFTFP_ABI=1`). The game draws into a 320×480 portrait FBO, which is rotated and stretched to fill all 960×544 with no black bars, the same method as the Blades of Fury port. *Verified on console.*
+- [x] **Touch & physical controls**: buttons and sticks inject synthetic touches on the game's own HUD. *Verified on console.*
 - [x] **Camera**: the right stick orbits the camera. Sensitivity (1–10) is saved to `ux0:data/skaternation/camera_sens.txt`.
-- [ ] **16:9 fullscreen without stretching**: temporarily reverted to the 7e6ebbe 3:2 pillarbox while the crash is bisected (it landed together with the regression).
-- [~] **1% opacity on the joystick and A/B buttons**: via `gameswf::character::set_member("_alpha")`. Implemented, not yet verified.
-- [ ] **Audio**: OpenAL → openal-soft. **Temporarily paused** (`AUDIO_ENABLED 0` in `source/coreaudio.c`) while the crash is isolated.
+- [x] **Audio**: OpenAL → openal-soft, re-enabled (`AUDIO_ENABLED 1`). Music and sound effects verified on console.
+- [x] **HUD opacity**: joystick and A/B buttons at 1% opacity via `gameswf::character::set_member("_alpha")`. Toggle with L+R. *Verified on console.*
 
 ---
 
-## Active Issue
+## Performance
 
-**Guest code reads uninitialized heap memory** (runs 22–28).
+- **Gameplay**: 25–28 FPS, with `drawView` capped at 30 FPS. `gles_present` writes `perf: N fps, frame X ms, swap Y ms` to the log every 5 s. Swap takes 0.1–0.3 ms, so the frame time is CPU-bound (the game itself), not GPU-bound.
+- **Loading**: 0.6–3 FPS while a level loads.
+- **Logging**: each log line is flushed to `ux0:` (about 10 ms). Nothing is logged per frame in Release. Debug builds (`DEBUG_LOADER`) log every `fopen` and are noticeably slower.
 
-| | |
-|---|---|
-| Latest crash (run 28) | `Application::LoadOrientationStyle` → `SetStatusBarOrientation(bool)+264` loads a pointer from `WorldManager + 0x4528`, gets garbage (`0x1a000003`) and faults. |
-| Root cause | `WorldManager` is allocated with `operator new(0x46d0)`, and its constructor never initializes `+0x4528`. On iOS, fresh heap memory is zero-filled; newlib returns leftover data. The game silently relies on zeroed memory. |
-| Why the crash kept "moving" | Where garbage lands depends on heap layout, so unrelated changes (widescreen, HUD, audio) moved the fault around. Runs 22–27 hit `SceGxm seg1 + 0xa548` (`sceGxmSetViewport` after a failed `sceGxmBeginScene`) during level loading. That is likely the same root cause. |
-| Fixed (run 29) | Guest `operator new`/`new[]` (`source/cxx.c`) and `malloc` (`source/darwin.c`) now return zero-filled memory (`calloc`). This removed the `WorldManager` crash. |
-| Still open | The SceGxm crash during level loading (`gles_present → glClear`). Run 30 showed that no GXM scene call fails. Run 31 bisects by restoring the 7e6ebbe graphics path, so 16:9 fullscreen is temporarily off (3:2 pillarbox). |
-| Already ruled out | r9 clobbering (the loader is built with `-ffixed-r9`), vitaGL tile clipper, scenes per frame, audio, HUD opacity. |
-| Still pending | Re-enable audio once loading is stable. If the SceGxm crash persists, bisect the `7e6ebbe → 297e1cc` delta (`wide_begin` projection, HUD opacity, scissor). |
+### Resolved: SceGxm crash during level loading (runs 22–31)
 
-Per-run history: [`port_progress.md`](port_progress.md). Release status: [`RELEASE.md`](RELEASE.md).
+The crash was an abort in `SceGxm seg1 + 0xa548` (`gles_present → glClear → scene_reset`). It was caused by the widescreen graphics path added in `297e1cc`. Restoring the `7e6ebbe` path fixed it. Along the way, a heap-garbage crash (`WorldManager + 0x4528` never initialized) was fixed by making guest `malloc`/`operator new` return zero-filled memory, as iOS does.
+
+Per-run history (in Spanish): [`port_progress.md`](port_progress.md). Release status: [`RELEASE.md`](RELEASE.md).
 
 ---
 
@@ -103,11 +102,12 @@ Requirements: VitaSDK (`$VITASDK`), CMake ≥ 3.14 and Python 3. vitaGL is vendo
 python3 -I tools/macho_prep.py game_app/SkateNation ux0_data/skaternation/rebase.bin \
     --report docs/macho_report.txt
 
-# Build (Debug enables DEBUG_LOADER: l_debug logs, e.g. every fopen)
-psvita-toolkit build            # or: cmake -B build && cmake --build build
+# Build (use Release to play; Debug enables DEBUG_LOADER and is much slower)
+psvita-toolkit build --preset release   # or: cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build
 
 # Deploy over FTP (VitaShell at 192.168.3.15:1337)
-psvita-toolkit deploy
+psvita-toolkit deploy --eboot --yes     # eboot.bin only (fast iteration)
+psvita-toolkit deploy --vpk             # full .vpk to ux0:downloads/
 
 # Analyze a crash dump
 psvita-toolkit analyze logs/<dump>.psp2dmp
@@ -132,11 +132,11 @@ Project rules (see `CLAUDE.md`): **one bug per console run, driven by logs**; no
 | `source/darwin.c`, `source/darwin_printf.c` | Darwin libc/libgcc/pthread/semaphores (zero-filled `malloc`); printf with unaligned doubles and `%@`. |
 | `source/objc.c`, `source/objc_rt.h` | ObjC 2.0 runtime: dispatch to the game's classes plus host Foundation. |
 | `source/uikit.c` | `UIApplicationMain` (emulated nib), run loop, `NSTimer`, touches → `UITouch`. |
-| `source/gles.c` | GLES1 → vitaGL, 320×480 FBO → 960×544, widescreen (`wide_begin`), `GL_FIXED` conversion; `glFlush` is a no-op. |
+| `source/gles.c` | GLES1 → vitaGL, 320×480 FBO stretched to 960×544, `GL_FIXED` conversion, 5 s `perf:` log line, GXM error hook. |
 | `source/cgbi.c` | Apple CgBI PNG decoder. |
 | `source/coreaudio.c` | OpenAL → openal-soft; AudioUnit RemoteIO and AudioSession. `AUDIO_ENABLED` switch. |
 | `source/cxx.c` | libstdc++ imports bound to VitaSDK's libstdc++ (COW ABI); zero-filled `operator new`. |
-| `source/input.c`, `source/patch.c` | Touch and buttons; synthetic touch mapping, camera and HUD opacity. |
+| `source/input.c`, `source/patch.c` | Touch (`x*480/960`) and buttons; synthetic touch mapping, camera and HUD opacity (offsets from `HudMenu::Init`). |
 | `source/log.c` | File log flushed on every line (`ux0:data/skaternation/logs/`). |
 
 ### iOS → Vita ABI rules
