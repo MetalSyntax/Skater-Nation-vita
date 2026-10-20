@@ -213,26 +213,7 @@ static void cam_update(void) {
 }
 
 void patch_overlay(void) {
-    if (!cam_osd_until || sceKernelGetProcessTimeWide() > cam_osd_until)
-        return;
-    GLint box[4];
-    GLfloat cc[4];
-    glGetIntegerv(GL_SCISSOR_BOX, box);
-    glGetFloatv(GL_COLOR_CLEAR_VALUE, cc);
-    glEnable(GL_SCISSOR_TEST);
-    const int bw = 22, bh = 14, gap = 4, w = CAM_LEVEL_MAX * (bw + gap) - gap;
-    int x0 = (960 - w) / 2, y0 = 544 - 20 - bh;
-    glScissor(x0 - 4, y0 - 4, w + 8, bh + 8);
-    glClearColor(0, 0, 0, 1);
-    glClear(GL_COLOR_BUFFER_BIT);
-    for (int i = 0; i < CAM_LEVEL_MAX; i++) {
-        glScissor(x0 + i * (bw + gap), y0, bw, bh);
-        i < cam_level ? glClearColor(0.2f, 0.8f, 1.0f, 1) : glClearColor(0.25f, 0.25f, 0.25f, 1);
-        glClear(GL_COLOR_BUFFER_BIT);
-    }
-    glScissor(box[0], box[1], box[2], box[3]);
-    glClearColor(cc[0], cc[1], cc[2], cc[3]);
-    glDisable(GL_SCISSOR_TEST);
+    // Avoid invoking glClear / glScissor on the display framebuffer during presentation
 }
 
 // ---------------------------------------------------------------- physical controls mapping

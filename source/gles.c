@@ -337,6 +337,12 @@ static void g_glBindFramebufferOES(GLenum target, GLuint fb) {
 }
 static int wide_target(void) { return fbo && bound_fb == fbo; }
 
+static void g_glScissor(GLint x, GLint y, GLsizei w, GLsizei h) {
+    if (w < 1) w = 1;
+    if (h < 1) h = 1;
+    glScissor(x, y, w, h);
+}
+
 // Around each 3D perspective draw into the window framebuffer: scale clip Y by WIDE_K (= 816/960)
 // to widen horizontal FOV by 960/816. When the 480-wide FBO is scaled to the native 960x544 PS Vita
 // screen, the 3D world renders in full screen with true 16:9 aspect ratio and zero horizontal stretching.
@@ -547,7 +553,7 @@ const import_entry gles_imports[] = {
     D(glCopyTexSubImage2D), D(glDeleteTextures), D(glDepthMask), D(glDisable), F(glDisableClientState, g_glDisableClientState),
     D(glEnable), F(glEnableClientState, g_glEnableClientState), D(glGenTextures), D(glGetIntegerv), D(glIsEnabled),
     D(glLoadIdentity), D(glLoadMatrixx), D(glMatrixMode), D(glOrthox), D(glPopMatrix), D(glPushMatrix),
-    D(glRotatex), D(glScalex), D(glScissor), D(glShadeModel), D(glTexImage2D), D(glTexParameteri),
+    D(glRotatex), D(glScalex), F(glScissor, g_glScissor), D(glShadeModel), D(glTexImage2D), D(glTexParameteri),
     D(glTexSubImage2D), D(glTranslatex), D(glViewport),
     F(glColor4x, g_glColor4x), F(glTexEnvi, g_glTexEnvi), F(glTexEnvxv, g_glTexEnvxv),
     F(glTexParameterx, g_glTexParameterx), F(glGetFixedv, g_glGetFixedv), F(glGetLightxv, g_glGetLightxv),

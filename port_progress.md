@@ -192,6 +192,20 @@ desplegar y probar en la consola física.
     4. Caché de opacidad (`last_applied_alpha`) para evitar invocar el despacho ActionScript en cada frame, haciéndolo una sola vez al cambiar de estado.
   - Compilación Release completada: `build/eboot.bin` (1.87 MB) y `build/skaternation.vpk` (1.91 MB) listos y verificados.
 
+- [x] Corrida 23 (`logs/log_023.log` + Core Dump `skaternation-psp2core-1792468119-0x00075020f9-eboot.bin.psp2dmp.analysis.txt`): Crash en SceGxm y diagnóstico de audio sin sonido.
+  - Causa del crash: Data Abort en `SceGxm seg1 + 0xa548` (`sceGxmSetRegionClip`) desde `scene_reset` en vitaGL invocado por `glClear`. vitaGL se compilaba sin `-DDISABLE_TILE_CLIPPER`, activando el recortador por hardware de SceGxm que aborta cuando se reciben rectángulos degenerate o fuera de límites.
+  - Causa de la falta de audio:
+    1. Conflicto de puertos Vita: `audio_thread` en `source/coreaudio.c` abría el puerto exclusivo `SCE_AUDIO_OUT_PORT_TYPE_BGM`, bloqueando el backend OpenAL de VitaSDK (`openal-soft`) que requiere dicho puerto para la salida de audio.
+    2. Faltaban stubs de UIKit para `MPMusicPlayerController` (`play`, `pause`, `stop`, `setQueueWithItemCollection:`, `setNowPlayingItem:`, `indexOfNowPlayingItem`).
+    3. Ausencia de instrumentación y ajuste de ganancia en OpenAL.
+  - Fixes implementados:
+    1. `CMakeLists.txt`: Añadido `NO_TILE_CLIPPER=1` (`-DDISABLE_TILE_CLIPPER`) a `VITAGL_MAKE_FLAGS_STR`.
+    2. `source/gles.c`: Sanitizado `g_glScissor` con clamp `w >= 1, h >= 1`.
+    3. `source/patch.c`: Desactivadas llamadas directas a `glScissor` / `glClear` en `patch_overlay()`.
+    4. `source/coreaudio.c`: Cambiado el puerto a `SCE_AUDIO_OUT_PORT_TYPE_MAIN` para permitir que OpenAL tome `BGM`, y añadidos wrappers con logging detallado y ganancia global (`alListenerf(AL_GAIN, 1.0f)`).
+    5. `source/uikit.c`: Registrados métodos faltantes de `MPMusicPlayerController`.
+  - Compilación Release completada: `build/eboot.bin` (1.8 MB) y `build/skaternation.vpk` (2.2 MB).
+
 ## ÚNICO PASO PENDIENTE: prueba en consola física
 
 Con la Vita conectada a 192.168.3.15 (VitaShell / FTP activo):

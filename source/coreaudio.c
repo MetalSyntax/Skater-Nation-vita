@@ -100,7 +100,7 @@ static int audio_thread(SceSize args, void *argp) {
     int rate = (int)u->fmt.mSampleRate, ch = u->fmt.mChannelsPerFrame;
     int bytes = u->fmt.mBitsPerChannel / 8;
     int nonint = (u->fmt.mFormatFlags & kAudioFormatFlagIsNonInterleaved) && ch == 2;
-    int port = sceAudioOutOpenPort(SCE_AUDIO_OUT_PORT_TYPE_BGM, GRAIN, rate, SCE_AUDIO_OUT_MODE_STEREO);
+    int port = sceAudioOutOpenPort(SCE_AUDIO_OUT_PORT_TYPE_MAIN, GRAIN, rate, SCE_AUDIO_OUT_MODE_STEREO);
     if (port < 0) {
         l_error("sceAudioOutOpenPort(%d Hz) = 0x%08X", rate, port);
         return 0;
@@ -189,10 +189,66 @@ static int as_GetProperty(uint32_t id, uint32_t *size, void *data) {
 
 // ---------------------------------------------------------------- OpenAL (openal-soft from VitaSDK)
 
+static ALCdevice *wrap_alcOpenDevice(const ALCchar *devicename) {
+    l_info("[OpenAL] alcOpenDevice(%s) called", devicename ? devicename : "NULL");
+    ALCdevice *dev = alcOpenDevice(devicename);
+    l_info("[OpenAL] alcOpenDevice -> %p", dev);
+    return dev;
+}
+
+static ALCcontext *wrap_alcCreateContext(ALCdevice *device, const ALCint *attrlist) {
+    l_info("[OpenAL] alcCreateContext(%p) called", device);
+    ALCcontext *ctx = alcCreateContext(device, attrlist);
+    l_info("[OpenAL] alcCreateContext -> %p", ctx);
+    return ctx;
+}
+
+static ALCboolean wrap_alcMakeContextCurrent(ALCcontext *context) {
+    l_info("[OpenAL] alcMakeContextCurrent(%p) called", context);
+    ALCboolean ret = alcMakeContextCurrent(context);
+    l_info("[OpenAL] alcMakeContextCurrent -> %d", (int)ret);
+    if (ret && context) {
+        alListenerf(AL_GAIN, 1.0f);
+    }
+    return ret;
+}
+
+static void wrap_alBufferData(ALuint buffer, ALenum format, const ALvoid *data, ALsizei size, ALsizei freq) {
+    alBufferData(buffer, format, data, size, freq);
+    ALenum err = alGetError();
+    if (err != AL_NO_ERROR) {
+        l_error("[OpenAL] alBufferData(buf=%u, fmt=0x%X, size=%d, freq=%d) FAILED: 0x%X", buffer, format, size, freq, err);
+    } else {
+        l_info("[OpenAL] alBufferData(buf=%u, fmt=0x%X, size=%d, freq=%d) OK", buffer, format, size, freq);
+    }
+}
+
+static void wrap_alSourcePlay(ALuint source) {
+    alSourcePlay(source);
+    ALenum err = alGetError();
+    if (err != AL_NO_ERROR) {
+        l_error("[OpenAL] alSourcePlay(src=%u) FAILED: 0x%X", source, err);
+    } else {
+        l_info("[OpenAL] alSourcePlay(src=%u) PLAYING", source);
+    }
+}
+
+static void wrap_alGenSources(ALsizei n, ALuint *sources) {
+    alGenSources(n, sources);
+    ALenum err = alGetError();
+    l_info("[OpenAL] alGenSources(%d) -> err 0x%X, first source=%u", n, err, n > 0 ? sources[0] : 0);
+}
+
+static void wrap_alGenBuffers(ALsizei n, ALuint *buffers) {
+    alGenBuffers(n, buffers);
+    ALenum err = alGetError();
+    l_info("[OpenAL] alGenBuffers(%d) -> err 0x%X, first buffer=%u", n, err, n > 0 ? buffers[0] : 0);
+}
+
 // Apple extension: buffer data stays owned by the app. openal-soft copies it, which is equivalent
 // as long as the game does not rewrite the memory afterwards.
 static void al_BufferDataStatic(ALuint buf, ALenum fmt, const ALvoid *data, ALsizei size, ALsizei freq) {
-    alBufferData(buf, fmt, data, size, freq);
+    wrap_alBufferData(buf, fmt, data, size, freq);
 }
 
 // Extensions are returned from our own import table so guest calls enter through ml_align_call.
@@ -207,12 +263,12 @@ static void *al_GetProcAddress(ALCdevice *dev, const ALCchar *name) {
 #define D(name) {"_" #name, (uintptr_t)(name)}
 
 const import_entry coreaudio_imports[] = {
-    D(alDeleteBuffers), D(alDeleteSources), D(alDistanceModel), D(alGenBuffers), D(alGenSources),
-    D(alGetError), D(alGetSourcei), D(alListenerfv), D(alSource3f), D(alSourcePause), D(alSourcePlay),
+    D(alDeleteBuffers), D(alDeleteSources), D(alDistanceModel), F(alGenBuffers, wrap_alGenBuffers), F(alGenSources, wrap_alGenSources),
+    D(alGetError), D(alGetSourcei), D(alListenerfv), D(alSource3f), D(alSourcePause), F(alSourcePlay, wrap_alSourcePlay),
     D(alSourceQueueBuffers), D(alSourceStop), D(alSourceUnqueueBuffers), D(alSourcef), D(alSourcefv),
-    D(alSourcei), D(alcCloseDevice), D(alcCreateContext), D(alcDestroyContext),
-    D(alcMakeContextCurrent), D(alcOpenDevice), D(alcProcessContext), D(alcSuspendContext),
-    D(alBufferData), D(alcGetContextsDevice), D(alcGetCurrentContext), // Skater Nation
+    D(alSourcei), D(alcCloseDevice), F(alcCreateContext, wrap_alcCreateContext), D(alcDestroyContext),
+    F(alcMakeContextCurrent, wrap_alcMakeContextCurrent), F(alcOpenDevice, wrap_alcOpenDevice), D(alcProcessContext), D(alcSuspendContext),
+    F(alBufferData, wrap_alBufferData), D(alcGetContextsDevice), D(alcGetCurrentContext), // Skater Nation
     F(alcGetProcAddress, al_GetProcAddress), F(alBufferDataStatic, al_BufferDataStatic),
     F(AudioComponentFindNext, au_FindNext), F(AudioComponentInstanceNew, au_InstanceNew),
     F(AudioComponentInstanceDispose, au_Dispose), F(AudioUnitSetProperty, au_SetProperty),
