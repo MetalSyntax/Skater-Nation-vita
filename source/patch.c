@@ -25,7 +25,66 @@ void patch_init(void) {
     l_info("Initializing game-specific patches...");
 }
 
+// ---------------------------------------------------------------- HUD controls opacity (1% default)
+
+static float hud_alpha = 1.0f; // 1% opacity for joystick and buttons A/B
+
+static void set_character_alpha(uintptr_t ch, float alpha_pct) {
+    if (!ch)
+        return;
+    float alpha = alpha_pct / 100.0f;
+    if (alpha < 0.0f) alpha = 0.0f;
+    if (alpha > 1.0f) alpha = 1.0f;
+
+    // gameswf::character layout:
+    // +0x98: pointer to dynamic cxform buffer (sizeof 0x54)
+    // +0x8c: pointer to active cxform (8 floats = 32 bytes)
+    // +0xdd: uint8_t has_cxform flag
+    float *cx = *(float **)(ch + 0x98);
+    if (!cx) {
+        cx = (float *)calloc(1, 0x54);
+        if (!cx)
+            return;
+        *(void **)(ch + 0x98) = cx;
+    }
+
+    float *src_cx = *(float **)(ch + 0x8c);
+    if (src_cx && src_cx != cx) {
+        memcpy(cx, src_cx, 32);
+    } else if (!src_cx) {
+        cx[0] = 1.0f; cx[1] = 1.0f; cx[2] = 1.0f; cx[3] = 0.0f;
+        cx[4] = 0.0f; cx[5] = 0.0f; cx[6] = 1.0f; cx[7] = 0.0f;
+    }
+
+    // Offset 0x18 (index 6) is the alpha multiplier in gameswf::cxform
+    cx[6] = alpha;
+    *(uint8_t *)(ch + 0xdd) = 1;
+    *(void **)(ch + 0x8c) = cx;
+}
+
+static void update_hud_opacity(void) {
+    static uint32_t *m_hudMenu_ptr = NULL;
+    if (!m_hudMenu_ptr) {
+        m_hudMenu_ptr = (uint32_t *)macho_sym("__ZN7HudMenu9m_hudMenuE");
+    }
+    if (!m_hudMenu_ptr || !*m_hudMenu_ptr)
+        return;
+
+    uintptr_t hud = *m_hudMenu_ptr;
+    // Set 1% opacity only on joystick and buttons A/B:
+    // btn_dpad (+0x1260), mc_pad (+0x125c), mc_thumb (+0x1258)
+    set_character_alpha(*(uintptr_t *)(hud + 0x1260), hud_alpha);
+    set_character_alpha(*(uintptr_t *)(hud + 0x125c), hud_alpha);
+    set_character_alpha(*(uintptr_t *)(hud + 0x1258), hud_alpha);
+    // mc_btn_a (+0x128c)
+    set_character_alpha(*(uintptr_t *)(hud + 0x128c), hud_alpha);
+    // mc_btn_b (+0x1294)
+    set_character_alpha(*(uintptr_t *)(hud + 0x1294), hud_alpha);
+    // Note: Pause (+0x124c), Map (+0x1254), score, and objectives remain untouched (100% visible)
+}
+
 void patch_frame(void) {
+    update_hud_opacity();
 }
 
 // ---------------------------------------------------------------- synthetic touch helpers
@@ -156,6 +215,16 @@ void patch_input(void) {
     static int loaded;
     if (!loaded++) {
         cam_load();
+    }
+
+    // L + R: toggle opacity between 1% and 100% for joystick and buttons A/B
+    const uint32_t LR = SCE_CTRL_LTRIGGER | SCE_CTRL_RTRIGGER;
+    if ((now & LR) == LR) {
+        if (pressed & LR) {
+            hud_alpha = (hud_alpha <= 1.0f) ? 100.0f : 1.0f;
+            l_info("HUD controls opacity toggled to %.0f%%", hud_alpha);
+        }
+        pad.buttons &= ~LR;
     }
 
     // SELECT + Up/Down: camera sensitivity adjust

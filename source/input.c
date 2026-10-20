@@ -47,9 +47,8 @@ void input_poll(void) {
         touches[i].id = t.report[i].id;
         touches[i].x = t.report[i].x / 2;
         touches[i].y = t.report[i].y / 2;
-        // Basic mapping to 480x320 landscape centered on 960x544 screen
-        // (game-specific patch.c can override this mapping based on viewport resolution)
-        int gx = (touches[i].x - 72) * 480 / 816;
+        // Fullscreen 960x544 mapping to 480x320 landscape (no black bars)
+        int gx = touches[i].x * 480 / 960;
         int gy = touches[i].y * 320 / 544;
         touches[i].gx = gx < 0 ? 0 : gx > 479 ? 479 : gx;
         touches[i].gy = gy < 0 ? 0 : gy > 319 ? 319 : gy;

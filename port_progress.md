@@ -167,6 +167,21 @@ desplegar y probar en la consola física.
     8. Stick Analógico Derecho: Rotación de cámara orbital mediante arrastre táctil continuo anclado en `(240.0f, 120.0f)` con ID `3000`, zona muerta cuadrática, y control de sensibilidad 1..10 persistente en `camera_sens.txt` (ajustable con `SELECT + UP/DOWN` y visualizable vía `patch_overlay()`).
   - Compilación Release completada: `build/eboot.bin` (1.87 MB) y `build/skaternation.vpk` (1.91 MB) listos para desplegar.
 
+- [x] Corrida 21 (`logs/log_021.log`): Sesión de juego fluida de más de 6 minutos continuos confirmada por el usuario. Solicitadas mejoras: (1) pantalla completa 960x544 sin barras negras y sin estiramiento de aspecto, y (2) opacidad al 1% en los controles táctiles virtuales (solo joystick y botones A/B).
+  - Causa de las barras negras: `wide_span()` en `source/gles.c` recortaba el scissor a 36..444 en Y (dejando bandas negras fijas en los extremos) y aplicaba `WIDE_K` de forma indiscriminada.
+  - Fix Pantalla Completa Panorámica (`source/gles.c` e `input.c`):
+    1. Eliminado el recorte artificial de scissor en `apply_scissor()`, permitiendo que el renderizado 3D y el clear ocupen los 480 px completos del FBO sin pillarbox.
+    2. Adaptación 3D en `wide_begin()`: solo escala por `WIDE_K` (= 816/960) las proyecciones de perspectiva 3D (`p[15] == 0, p[11] != 0`). Esto amplía el campo de visión horizontal (FOV) de la cámara a 16:9 real. Al proyectarse en la pantalla 960x544, el aspecto 3D no sufre estiramiento ni deformación anamórfica.
+    3. Mapeo táctil en `source/input.c` ajustado a pantalla completa (0..960 -> 0..480) sin el offset de 72 px anterior.
+  - Fix Opacidad 1% en Controles (`source/patch.c`):
+    1. Implementado `set_character_alpha()` modificando el multiplicador de canal alfa en el `gameswf::cxform` de cada objeto de interfaz.
+    2. Aplicado 1% de opacidad (`alpha = 0.01f`) exclusivamente a `btn_dpad`, `mc_pad`, `mc_thumb` (joystick virtual) y `mc_btn_a`, `mc_btn_b` (botones de acción).
+    3. El menú de pausa (`btn_menu`), el mapa (`btn_map`), marcador y retos permanecen 100% visibles.
+    4. Los controles virtuales a 1% conservan sus pruebas de impacto (hit-testing) de Flash activas, permitiendo control híbrido y botones táctiles funcionales.
+    5. Combinación `L + R` añadida para alternar la opacidad entre 1% y 100% en tiempo real.
+  - Optimización de E/S (`source/darwin.c`): Redirigidos logs de `printf` y `[guest]` a `l_debug` para evitar micro-pausas por `fflush` durante combos y trucos.
+  - Compilación Release completada: `build/eboot.bin` y `build/skaternation.vpk` actualizados.
+
 ## ÚNICO PASO PENDIENTE: prueba en consola física
 
 Con la Vita conectada a 192.168.3.15 (VitaShell / FTP activo):

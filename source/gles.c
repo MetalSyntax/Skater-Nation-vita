@@ -331,7 +331,6 @@ static void g_glDeleteFramebuffersOES(GLsizei n, const GLuint *ids) {
 
 static GLuint bound_fb;
 static GLint scissor_box[4];
-static int scissor_wide = -1; // state the real scissor box was last set for
 
 static void g_glBindFramebufferOES(GLenum target, GLuint fb) {
     bound_fb = fb;
@@ -339,27 +338,11 @@ static void g_glBindFramebufferOES(GLenum target, GLuint fb) {
 }
 static int wide_target(void) { return fbo && bound_fb == fbo; }
 
-// Screen-horizontal = framebuffer Y (the 320x480 framebuffer is portrait): Y spans are scaled
-// around the framebuffer center.
-static void wide_span(GLint *y, GLsizei *h) {
-    float c = FB_H / 2.0f;
-    *y = (GLint)(c + (*y - c) * WIDE_K);
-    *h = (GLsizei)(*h * WIDE_K + 0.5f);
-}
 static void apply_scissor(void) {
-    int w = wide_target();
-    if (w == scissor_wide)
-        return;
-    GLint x = scissor_box[0], y = scissor_box[1];
-    GLsizei sw = scissor_box[2], sh = scissor_box[3];
-    if (w)
-        wide_span(&y, &sh);
-    glScissor(x, y, sw, sh);
-    scissor_wide = w;
+    glScissor(scissor_box[0], scissor_box[1], scissor_box[2], scissor_box[3]);
 }
 static void g_glScissor(GLint x, GLint y, GLsizei w, GLsizei h) {
     scissor_box[0] = x, scissor_box[1] = y, scissor_box[2] = w, scissor_box[3] = h;
-    scissor_wide = -1;
     apply_scissor();
 }
 static void g_glClear(GLbitfield mask) {
@@ -367,18 +350,15 @@ static void g_glClear(GLbitfield mask) {
     glClear(mask);
 }
 static void g_glCopyTexImage2D(GLenum t, GLint l, GLenum f, GLint x, GLint y, GLsizei w, GLsizei h, GLint b) {
-    if (wide_target())
-        wide_span(&y, &h);
     glCopyTexImage2D(t, l, f, x, y, w, h, b);
 }
 static void g_glCopyTexSubImage2D(GLenum t, GLint l, GLint xo, GLint yo, GLint x, GLint y, GLsizei w, GLsizei h) {
-    if (wide_target())
-        wide_span(&y, &h);
     glCopyTexSubImage2D(t, l, xo, yo, x, y, w, h);
 }
 
-// Around each draw into the window framebuffer: projection P -> S * P, S scaling clip Y by WIDE_K
-// (row 1 of the column-major matrix). Restored right after, so the game's matrices never change.
+// Around each 3D perspective draw into the window framebuffer: scale clip Y by WIDE_K (= 816/960)
+// to widen horizontal FOV by 960/816. When the 480-wide FBO is scaled to the native 960x544 PS Vita
+// screen, the 3D world renders in full screen with true 16:9 aspect ratio and zero horizontal stretching.
 static int wide_begin(void) {
     apply_scissor();
     if (!wide_target())
@@ -389,10 +369,16 @@ static int wide_begin(void) {
     glMatrixMode(GL_PROJECTION);
     glPushMatrix();
     glGetFloatv(GL_PROJECTION_MATRIX, p);
-    p[1] *= WIDE_K, p[5] *= WIDE_K, p[9] *= WIDE_K, p[13] *= WIDE_K;
-    glLoadMatrixf(p);
+    // Only adapt 3D perspective projections (p[15] == 0, p[11] != 0).
+    // 2D orthographic projections (p[15] == 1, p[11] == 0) remain 1:1.
+    if (p[15] == 0.0f && p[11] != 0.0f) {
+        p[1] *= WIDE_K, p[5] *= WIDE_K, p[9] *= WIDE_K, p[13] *= WIDE_K;
+        glLoadMatrixf(p);
+        glMatrixMode(mode);
+        return 1;
+    }
     glMatrixMode(mode);
-    return 1;
+    return 0;
 }
 static void wide_end(int on) {
     if (!on)

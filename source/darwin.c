@@ -385,7 +385,7 @@ static int d_printf(const char *fmt, ...) {
     size_t n = strlen(buf);
     if (n && buf[n - 1] == '\n')
         buf[n - 1] = 0;
-    l_info("printf: %s", buf);
+    l_debug("printf: %s", buf);
     return r;
 }
 static int d_snprintf(char *buf, size_t len, const char *fmt, ...) {
@@ -651,7 +651,7 @@ static int d_vfprintf(FILE *f, const char *fmt, const uint32_t *ap) {
     words w = {NULL, ap};
     int r = darwin_vformat(b, sizeof(b), fmt, &w);
     if (f == d_stdoutp || f == d_stderrp)
-        l_info("[guest] %s", b);
+        l_debug("[guest] %s", b);
     else
         fputs(b, f);
     return r;
@@ -664,14 +664,14 @@ static int d_fprintf(FILE *f, const char *fmt, ...) {
     int r = darwin_vformat(b, sizeof(b), fmt, &w);
     va_end(ap);
     if (f == d_stdoutp || f == d_stderrp)
-        l_info("[guest] %s", b);
+        l_debug("[guest] %s", b);
     else
         fputs(b, f);
     return r;
 }
 static int d_write(int fd, const void *buf, size_t n) {
     if (fd == 1 || fd == 2) {
-        l_info("[guest] %.*s", (int)n, (const char *)buf);
+        l_debug("[guest] %.*s", (int)n, (const char *)buf);
         return n;
     }
     return write(fd, buf, n);
