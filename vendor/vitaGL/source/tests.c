@@ -286,7 +286,8 @@ void update_scissor_test() {
 
 #ifndef DISABLE_TILE_CLIPPER
 	// Invalidating internal tile based region clip
-	sceGxmSetRegionClip(gxm_context, SCE_GXM_REGION_CLIP_OUTSIDE, 0, 0, active_w - 1, active_h - 1);
+	if (active_w > 0 && active_h > 0)
+		sceGxmSetRegionClip(gxm_context, SCE_GXM_REGION_CLIP_OUTSIDE, 0, 0, active_w - 1, active_h - 1);
 #endif
 	
 	if (scissor_test_state) {
@@ -341,7 +342,7 @@ void update_scissor_test() {
 
 #ifndef DISABLE_TILE_CLIPPER
 	// Reducing GPU workload by performing tile granularity clipping
-	if (scissor_test_state) {
+	if (scissor_test_state && region.w > 0 && region.h > 0) {
 #ifndef HAVE_UNFLIPPED_FBOS
 		if (!is_rendering_display) {
 			uint32_t y = region.gl_y > 0 ? region.gl_y : 0;

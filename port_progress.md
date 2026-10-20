@@ -206,6 +206,20 @@ desplegar y probar en la consola física.
     5. `source/uikit.c`: Registrados métodos faltantes de `MPMusicPlayerController`.
   - Compilación Release completada: `build/eboot.bin` (1.8 MB) y `build/skaternation.vpk` (2.2 MB).
 
+- [x] Corrida 24 (`logs/log_024.log` + Core Dump `skaternation-psp2core-1792470237-0x00076d26bb-eboot.bin.psp2dmp`): El subsistema OpenAL inicializó y reprodujo correctamente, pero se produjo un Data Abort en `SceGxm` (`0xe008e958`) durante la pantalla de carga del nivel 3D (`Application::_Draw` -> `CCommonGLDriver::endScene` -> `glFlush`).
+  - Causas raíz:
+    1. `NO_TILE_CLIPPER=1` (`DISABLE_TILE_CLIPPER`) forzaba a vitaGL a usar el búfer de stencil para emular `glScissor`. Como el FBO de la pantalla es solo RGB565/RGBA con profundidad de 16 bits sin stencil (`DEPTHBUFFER_MISSING`), `update_scissor_test()` invocaba operaciones de renderizado en un búfer inexistente.
+    2. `glFlush()` en vitaGL forzaba `scene_reset()`, provocando múltiples llamadas a `sceGxmBeginScene()` en el mismo frame sobre el FBO. Al estar `gxm_fbo_rt_size = 1` por defecto, la segunda escena fallaba y `sceGxmSetViewport` intentaba operar sobre una escena no iniciada en `SceGxm`. En iOS/PowerVR SGX, `glFlush()` es un no-op y no debe reiniciar escenas a mitad de presentación.
+    3. `sceGxmSetRegionClip` en `vendor/vitaGL` no verificaba si `region.w <= 0 || region.h <= 0`, causando que `region.w - 1` hiciera underflow a `0xFFFFFFFF`.
+    4. Convención de llamada ABI softfp en `gameswf::as_value::as_value(double)`: `as_ctor` requería que el valor `double` se pasara en `(r1, r2)` y no en el registro de hardware VFP `d0`.
+  - Soluciones implementadas:
+    1. `CMakeLists.txt`: Eliminado `NO_TILE_CLIPPER=1` para restaurar el clipping nativo por hardware de la GPU de PS Vita.
+    2. `vendor/vitaGL/source/gxm.c` y `vendor/vitaGL/source/tests.c`: Añadidas guardas `region.w > 0 && region.h > 0` para evitar underflows en `sceGxmSetRegionClip`.
+    3. `source/gles.c`: Añadido `vglSetupRenderTargetScenesNum(4, 16)` para permitir múltiples escenas por frame sin agotar descriptores.
+    4. `source/gles.c`: Mapeado `glFlush` a `g_glNoop` (no-op estándar en TBDR / iOS).
+    5. `source/patch.c`: Implementado empaquetado de `double` a `(uint32_t val_lo, uint32_t val_hi)` para `as_ctor` en `set_character_alpha`.
+  - Compilación Release completada: `build/eboot.bin` (1.8 MB) y `build/skaternation.vpk` (2.2 MB).
+
 ## ÚNICO PASO PENDIENTE: prueba en consola física
 
 Con la Vita conectada a 192.168.3.15 (VitaShell / FTP activo):

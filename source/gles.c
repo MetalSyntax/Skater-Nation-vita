@@ -419,6 +419,7 @@ static void g_glNoop(void) {}
 
 void gles_init(void) {
     vglUseTripleBuffering(GL_FALSE);
+    vglSetupRenderTargetScenesNum(4, 16);
     vglInitExtended(0, SCR_W, SCR_H, 8 * 1024 * 1024, SCE_GXM_MULTISAMPLE_NONE);
     glGenTextures(1, &fbo_tex);
     glBindTexture(GL_TEXTURE_2D, fbo_tex);
@@ -548,7 +549,7 @@ void gles_present(int rotate180) {
 #define D(name) {"_" #name, (uintptr_t)(name)}
 
 const import_entry gles_imports[] = {
-    D(glFlush), D(glFrustumf), D(glOrthof), // used by Skater Nation, absent in Zombie Infection
+    F(glFlush, g_glNoop), D(glFrustumf), D(glOrthof), // used by Skater Nation, absent in Zombie Infection
     D(glActiveTexture), D(glBindTexture), D(glBlendFunc), D(glClear), D(glCopyTexImage2D),
     D(glCopyTexSubImage2D), D(glDeleteTextures), D(glDepthMask), D(glDisable), F(glDisableClientState, g_glDisableClientState),
     D(glEnable), F(glEnableClientState, g_glEnableClientState), D(glGenTextures), D(glGetIntegerv), D(glIsEnabled),

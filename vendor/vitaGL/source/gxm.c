@@ -694,7 +694,7 @@ void scene_reset(void) {
 		}
 
 #ifndef DISABLE_TILE_CLIPPER
-		if (scissor_test_state)
+		if (scissor_test_state && region.w > 0 && region.h > 0)
 			sceGxmSetRegionClip(gxm_context, SCE_GXM_REGION_CLIP_OUTSIDE, region.x, region.y, region.x + region.w - 1, region.y + region.h - 1);
 #endif
 	}

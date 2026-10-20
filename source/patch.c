@@ -36,7 +36,7 @@ static void set_character_alpha(uintptr_t ch, double alpha_pct) {
 
     typedef void (*tu_ctor_t)(void *self, const char *str);
     typedef void (*tu_dtor_t)(void *self);
-    typedef void (*as_ctor_t)(void *self, double val);
+    typedef void (*as_ctor_t)(void *self, uint32_t val_lo, uint32_t val_hi);
     typedef void (*as_dtor_t)(void *self);
     typedef bool (*set_mem_t)(void *ch, const void *name, const void *val);
 
@@ -61,7 +61,12 @@ static void set_character_alpha(uintptr_t ch, double alpha_pct) {
     char val_buf[64] = {0};
 
     tu_ctor(str_buf, "_alpha");
-    as_ctor(val_buf, alpha_pct);
+    union {
+        double d;
+        struct { uint32_t lo, hi; } u;
+    } dv;
+    dv.d = alpha_pct;
+    as_ctor(val_buf, dv.u.lo, dv.u.hi);
 
     set_mem((void *)ch, str_buf, val_buf);
 
