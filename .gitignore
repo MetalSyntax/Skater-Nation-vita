@@ -48,4 +48,7 @@ __pycache__/
 .vscode/
 .idea/
 *.swp
+*.bak
+*.webp
+
 cmake-build-*/

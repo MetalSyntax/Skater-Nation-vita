@@ -330,7 +330,6 @@ static void g_glDeleteFramebuffersOES(GLsizei n, const GLuint *ids) {
 // ---------------------------------------------------------------- widescreen (see WIDE_K)
 
 static GLuint bound_fb;
-static GLint scissor_box[4];
 
 static void g_glBindFramebufferOES(GLenum target, GLuint fb) {
     bound_fb = fb;
@@ -338,29 +337,10 @@ static void g_glBindFramebufferOES(GLenum target, GLuint fb) {
 }
 static int wide_target(void) { return fbo && bound_fb == fbo; }
 
-static void apply_scissor(void) {
-    glScissor(scissor_box[0], scissor_box[1], scissor_box[2], scissor_box[3]);
-}
-static void g_glScissor(GLint x, GLint y, GLsizei w, GLsizei h) {
-    scissor_box[0] = x, scissor_box[1] = y, scissor_box[2] = w, scissor_box[3] = h;
-    apply_scissor();
-}
-static void g_glClear(GLbitfield mask) {
-    apply_scissor();
-    glClear(mask);
-}
-static void g_glCopyTexImage2D(GLenum t, GLint l, GLenum f, GLint x, GLint y, GLsizei w, GLsizei h, GLint b) {
-    glCopyTexImage2D(t, l, f, x, y, w, h, b);
-}
-static void g_glCopyTexSubImage2D(GLenum t, GLint l, GLint xo, GLint yo, GLint x, GLint y, GLsizei w, GLsizei h) {
-    glCopyTexSubImage2D(t, l, xo, yo, x, y, w, h);
-}
-
 // Around each 3D perspective draw into the window framebuffer: scale clip Y by WIDE_K (= 816/960)
 // to widen horizontal FOV by 960/816. When the 480-wide FBO is scaled to the native 960x544 PS Vita
 // screen, the 3D world renders in full screen with true 16:9 aspect ratio and zero horizontal stretching.
 static int wide_begin(void) {
-    apply_scissor();
     if (!wide_target())
         return 0;
     GLint mode;
@@ -369,8 +349,8 @@ static int wide_begin(void) {
     glMatrixMode(GL_PROJECTION);
     glPushMatrix();
     glGetFloatv(GL_PROJECTION_MATRIX, p);
-    // Only adapt 3D perspective projections (p[15] == 0, p[11] != 0).
-    // 2D orthographic projections (p[15] == 1, p[11] == 0) remain 1:1.
+    // In OpenGL: perspective projection has p[15] == 0.0f and p[11] != 0.0f.
+    // Orthographic (2D Flash UI / menus) has p[15] == 1.0f and p[11] == 0.0f.
     if (p[15] == 0.0f && p[11] != 0.0f) {
         p[1] *= WIDE_K, p[5] *= WIDE_K, p[9] *= WIDE_K, p[13] *= WIDE_K;
         glLoadMatrixf(p);
@@ -563,11 +543,11 @@ void gles_present(int rotate180) {
 
 const import_entry gles_imports[] = {
     D(glFlush), D(glFrustumf), D(glOrthof), // used by Skater Nation, absent in Zombie Infection
-    D(glActiveTexture), D(glBindTexture), D(glBlendFunc), F(glClear, g_glClear), F(glCopyTexImage2D, g_glCopyTexImage2D),
-    F(glCopyTexSubImage2D, g_glCopyTexSubImage2D), D(glDeleteTextures), D(glDepthMask), D(glDisable), F(glDisableClientState, g_glDisableClientState),
+    D(glActiveTexture), D(glBindTexture), D(glBlendFunc), D(glClear), D(glCopyTexImage2D),
+    D(glCopyTexSubImage2D), D(glDeleteTextures), D(glDepthMask), D(glDisable), F(glDisableClientState, g_glDisableClientState),
     D(glEnable), F(glEnableClientState, g_glEnableClientState), D(glGenTextures), D(glGetIntegerv), D(glIsEnabled),
     D(glLoadIdentity), D(glLoadMatrixx), D(glMatrixMode), D(glOrthox), D(glPopMatrix), D(glPushMatrix),
-    D(glRotatex), D(glScalex), F(glScissor, g_glScissor), D(glShadeModel), D(glTexImage2D), D(glTexParameteri),
+    D(glRotatex), D(glScalex), D(glScissor), D(glShadeModel), D(glTexImage2D), D(glTexParameteri),
     D(glTexSubImage2D), D(glTranslatex), D(glViewport),
     F(glColor4x, g_glColor4x), F(glTexEnvi, g_glTexEnvi), F(glTexEnvxv, g_glTexEnvxv),
     F(glTexParameterx, g_glTexParameterx), F(glGetFixedv, g_glGetFixedv), F(glGetLightxv, g_glGetLightxv),

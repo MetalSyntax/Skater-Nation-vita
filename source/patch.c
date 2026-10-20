@@ -5,6 +5,7 @@
 #include <psp2/ctrl.h>
 #include <psp2/io/fcntl.h>
 #include <psp2/kernel/processmgr.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,37 +30,43 @@ void patch_init(void) {
 
 static float hud_alpha = 1.0f; // 1% opacity for joystick and buttons A/B
 
-static void set_character_alpha(uintptr_t ch, float alpha_pct) {
-    if (!ch)
+static void set_character_alpha(uintptr_t ch, double alpha_pct) {
+    if (!ch || ch < 0x81000000 || ch >= 0x99000000)
         return;
-    float alpha = alpha_pct / 100.0f;
-    if (alpha < 0.0f) alpha = 0.0f;
-    if (alpha > 1.0f) alpha = 1.0f;
 
-    // gameswf::character layout:
-    // +0x98: pointer to dynamic cxform buffer (sizeof 0x54)
-    // +0x8c: pointer to active cxform (8 floats = 32 bytes)
-    // +0xdd: uint8_t has_cxform flag
-    float *cx = *(float **)(ch + 0x98);
-    if (!cx) {
-        cx = (float *)calloc(1, 0x54);
-        if (!cx)
-            return;
-        *(void **)(ch + 0x98) = cx;
+    typedef void (*tu_ctor_t)(void *self, const char *str);
+    typedef void (*tu_dtor_t)(void *self);
+    typedef void (*as_ctor_t)(void *self, double val);
+    typedef void (*as_dtor_t)(void *self);
+    typedef bool (*set_mem_t)(void *ch, const void *name, const void *val);
+
+    static tu_ctor_t tu_ctor = NULL;
+    static tu_dtor_t tu_dtor = NULL;
+    static as_ctor_t as_ctor = NULL;
+    static as_dtor_t as_dtor = NULL;
+    static set_mem_t set_mem = NULL;
+
+    if (!tu_ctor) {
+        tu_ctor = (tu_ctor_t)macho_sym("__ZN7gameswf9tu_stringC1EPKc");
+        tu_dtor = (tu_dtor_t)macho_sym("__ZN7gameswf9tu_stringD1Ev");
+        as_ctor = (as_ctor_t)macho_sym("__ZN7gameswf8as_valueC1Ed");
+        as_dtor = (as_dtor_t)macho_sym("__ZN7gameswf8as_valueD1Ev");
+        set_mem = (set_mem_t)macho_sym("__ZN7gameswf9character10set_memberERKNS_10tu_stringiERKNS_8as_valueE");
     }
 
-    float *src_cx = *(float **)(ch + 0x8c);
-    if (src_cx && src_cx != cx) {
-        memcpy(cx, src_cx, 32);
-    } else if (!src_cx) {
-        cx[0] = 1.0f; cx[1] = 1.0f; cx[2] = 1.0f; cx[3] = 0.0f;
-        cx[4] = 0.0f; cx[5] = 0.0f; cx[6] = 1.0f; cx[7] = 0.0f;
-    }
+    if (!tu_ctor || !tu_dtor || !as_ctor || !as_dtor || !set_mem)
+        return;
 
-    // Offset 0x18 (index 6) is the alpha multiplier in gameswf::cxform
-    cx[6] = alpha;
-    *(uint8_t *)(ch + 0xdd) = 1;
-    *(void **)(ch + 0x8c) = cx;
+    char str_buf[64] = {0};
+    char val_buf[64] = {0};
+
+    tu_ctor(str_buf, "_alpha");
+    as_ctor(val_buf, alpha_pct);
+
+    set_mem((void *)ch, str_buf, val_buf);
+
+    as_dtor(val_buf);
+    tu_dtor(str_buf);
 }
 
 static void update_hud_opacity(void) {
@@ -71,16 +78,39 @@ static void update_hud_opacity(void) {
         return;
 
     uintptr_t hud = *m_hudMenu_ptr;
+    if (hud < 0x81000000 || hud >= 0x99000000)
+        return;
+
+    // Check if characters have been created by HudMenu::Init()
+    uintptr_t btn_a = *(uintptr_t *)(hud + 0x128c);
+    uintptr_t btn_b = *(uintptr_t *)(hud + 0x1294);
+    uintptr_t dpad  = *(uintptr_t *)(hud + 0x1260);
+
+    if (!btn_a || !btn_b || !dpad)
+        return;
+    if (btn_a < 0x81000000 || btn_a >= 0x99000000)
+        return;
+    if (btn_b < 0x81000000 || btn_b >= 0x99000000)
+        return;
+    if (dpad < 0x81000000 || dpad >= 0x99000000)
+        return;
+
+    static float last_applied_alpha = -1.0f;
+    if (last_applied_alpha == hud_alpha)
+        return;
+
     // Set 1% opacity only on joystick and buttons A/B:
     // btn_dpad (+0x1260), mc_pad (+0x125c), mc_thumb (+0x1258)
-    set_character_alpha(*(uintptr_t *)(hud + 0x1260), hud_alpha);
-    set_character_alpha(*(uintptr_t *)(hud + 0x125c), hud_alpha);
-    set_character_alpha(*(uintptr_t *)(hud + 0x1258), hud_alpha);
+    set_character_alpha(dpad, (double)hud_alpha);
+    set_character_alpha(*(uintptr_t *)(hud + 0x125c), (double)hud_alpha); // mc_pad
+    set_character_alpha(*(uintptr_t *)(hud + 0x1258), (double)hud_alpha); // mc_thumb
     // mc_btn_a (+0x128c)
-    set_character_alpha(*(uintptr_t *)(hud + 0x128c), hud_alpha);
+    set_character_alpha(btn_a, (double)hud_alpha);
     // mc_btn_b (+0x1294)
-    set_character_alpha(*(uintptr_t *)(hud + 0x1294), hud_alpha);
-    // Note: Pause (+0x124c), Map (+0x1254), score, and objectives remain untouched (100% visible)
+    set_character_alpha(btn_b, (double)hud_alpha);
+
+    last_applied_alpha = hud_alpha;
+    l_info("HUD controls opacity set to %.0f%%", hud_alpha);
 }
 
 void patch_frame(void) {

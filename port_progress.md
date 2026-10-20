@@ -182,6 +182,16 @@ desplegar y probar en la consola física.
   - Optimización de E/S (`source/darwin.c`): Redirigidos logs de `printf` y `[guest]` a `l_debug` para evitar micro-pausas por `fflush` durante combos y trucos.
   - Compilación Release completada: `build/eboot.bin` y `build/skaternation.vpk` actualizados.
 
+- [x] Corrida 22 (`logs/log_022.log` + Core Dump `skaternation-psp2core-1792460612-0x001dfb2621-eboot.bin.psp2dmp`): Crash fatal al iniciar el juego tras los cambios de pantalla panorámica y opacidad.
+  - Causa raíz 1 (Fatal en SceGxm): `source/gles.c` implementaba un wrapper `apply_scissor()` que se invocaba incondicionalmente durante `g_glClear` y `wide_begin` con `scissor_box[4] = {0, 0, 0, 0}` sin inicializar. Al pasar dimensiones 0x0 a `glScissor`, vitaGL calculaba `region.w - 1 = -1` (0xFFFFFFFF) y lo enviaba a `sceGxmSetRegionClip()`, provocando un Data Abort inmediato en el driver gráfico de Sony (`SceGxm seg1 + 0xa548`).
+  - Causa raíz 2 (Corrupción de memoria en gameswf): `set_character_alpha()` intentaba asignar memoria en `ch + 0x98` asumiendo un buffer `cxform`. En gameswf, `ch + 0x98` es una tabla hash interna con constructores propios de C++, por lo que `calloc(1, 0x54)` corrompía la tabla de símbolos del objeto Flash en el arranque.
+  - Fix implementado:
+    1. `source/gles.c`: Eliminados todos los wrappers manuales de scissor (`apply_scissor`, `g_glScissor`, `g_glClear`, `g_glCopyTexImage2D`). Mapeados directamente a las implementaciones nativas y seguras de vitaGL (`D(glClear)`, `D(glScissor)`, `D(glCopyTexImage2D)`). En `wide_begin()`, solo se escala la matriz de proyección si `p[15] == 0.0f && p[11] != 0.0f` (3D puro), sin tocar el estado de scissor.
+    2. `source/patch.c`: Reemplazada la manipulación directa de memoria por el uso de la API oficial de C++ de gameswf exportada en el Mach-O: `gameswf::character::set_member(tu_stringi("_alpha"), as_value(alpha_pct))` usando los símbolos `__ZN7gameswf9tu_stringC1EPKc`, `__ZN7gameswf8as_valueC1Ed` y `__ZN7gameswf9character10set_memberERKNS_10tu_stringiERKNS_8as_valueE`.
+    3. Añadida validación de rangos de punteros válidos (`0x81000000 <= ptr < 0x99000000`) y verificación de que `btn_a`, `btn_b` y `dpad` hayan sido instanciados por `HudMenu::Init` antes de aplicar opacidad.
+    4. Caché de opacidad (`last_applied_alpha`) para evitar invocar el despacho ActionScript en cada frame, haciéndolo una sola vez al cambiar de estado.
+  - Compilación Release completada: `build/eboot.bin` (1.87 MB) y `build/skaternation.vpk` (1.91 MB) listos y verificados.
+
 ## ÚNICO PASO PENDIENTE: prueba en consola física
 
 Con la Vita conectada a 192.168.3.15 (VitaShell / FTP activo):
